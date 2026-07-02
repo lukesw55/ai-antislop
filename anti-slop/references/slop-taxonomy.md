@@ -34,7 +34,7 @@ Signals:
 
 - exaggerated claims: "revolutionary", "game-changing", "10x", "magic", "world-class"
 - emotionally manipulative phrasing
-- fake urgency or viral framing
+- fake urgency or "viral" framing
 - bizarre examples designed for attention rather than utility
 - marketing copy in technical docs without evidence
 

@@ -7,6 +7,7 @@ possible issues; it never edits files.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -14,6 +15,9 @@ import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable
+
+# Vendored skills are reference material about slop, not repo content.
+DEFAULT_EXCLUDES = [".claude/skills/*"]
 
 SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "dist", "build", ".next", ".nuxt",
@@ -55,6 +59,36 @@ class Finding:
     severity: str
     message: str
     excerpt: str
+
+
+QUOTE_CHARS = {'"', "'", "`"}
+
+
+def is_mention(line: str, start: int, end: int) -> bool:
+    """True when the matched text is quoted or backticked on its line.
+
+    Docs that list slop phrases, regex source strings, and JSON fixtures all
+    wrap the phrase in quotes or backticks — they mention the pattern rather
+    than make the claim. Only unquoted occurrences count as findings.
+    """
+    before = line[:start].rstrip()
+    after = line[end:].lstrip()
+    for quote in QUOTE_CHARS:
+        if before.endswith(quote) and quote in after:
+            return True
+    # A match inside any string literal on the line (e.g. regex sources,
+    # JSON values) sits after an odd number of quote characters.
+    for quote in QUOTE_CHARS:
+        if line[:start].count(quote) % 2 == 1:
+            return True
+    return False
+
+
+def is_excluded(rel: str, excludes: list[str]) -> bool:
+    return any(
+        fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, pattern.rstrip("/*") + "/*")
+        for pattern in excludes
+    )
 
 
 def is_text_file(path: Path) -> bool:
@@ -113,7 +147,8 @@ def scan_file(path: Path, root: Path) -> list[Finding]:
         if not stripped:
             continue
         for code, severity, message, pattern in RULES:
-            if pattern.search(line):
+            match = pattern.search(line)
+            if match and not is_mention(line, match.start(), match.end()):
                 findings.append(Finding(rel, i, code, severity, message, stripped[:180]))
                 break
 
@@ -126,7 +161,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of text")
     parser.add_argument("--max-findings", type=int, default=200, help="Maximum findings to print")
     parser.add_argument("--fail-on-block", action="store_true", help="Exit 2 when BLOCK findings are present")
+    parser.add_argument("--exclude", action="append", default=[], metavar="GLOB",
+                        help="Skip files whose repo-relative path matches GLOB (repeatable)")
+    parser.add_argument("--no-default-excludes", action="store_true",
+                        help=f"Also scan default-excluded paths: {DEFAULT_EXCLUDES}")
     args = parser.parse_args(argv)
+
+    excludes = list(args.exclude)
+    if not args.no_default_excludes:
+        excludes.extend(DEFAULT_EXCLUDES)
 
     root = Path(args.path).resolve()
     if not root.exists():
@@ -138,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     scan_root = root.parent if root.is_file() else root
 
     for path in files:
+        if is_excluded(path.relative_to(scan_root).as_posix(), excludes):
+            continue
         findings.extend(scan_file(path, scan_root))
         if len(findings) >= args.max_findings:
             findings = findings[: args.max_findings]

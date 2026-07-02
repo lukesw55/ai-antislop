@@ -42,16 +42,18 @@ cp -r ai-antislop/anti-slop ~/.claude/skills/
 
 Restart Claude Code. Skill auto-loads via the `Skill` tool when triggers fire.
 
-For runtime enforcement, wire the bundled Stop hook — it scans the final assistant message for slop patterns and asks Claude to revise before stopping (see [`anti-slop/hooks/hooks.example.json`](anti-slop/hooks/hooks.example.json)):
+For runtime enforcement, wire the bundled Stop hook — it reads the final assistant message from the session transcript, scans it for slop patterns, and asks Claude to revise before stopping. For the personal install above:
 
 ```jsonc
-// .claude/settings.json
+// ~/.claude/settings.json
 {
   "hooks": {
-    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/skills/anti-slop/hooks/anti-slop-stop.py", "timeout": 10 }] }]
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 \"$HOME/.claude/skills/anti-slop/hooks/anti-slop-stop.py\"", "timeout": 10 }] }]
   }
 }
 ```
+
+If you vendor the skill inside a project (`.claude/skills/anti-slop/`), use the `${CLAUDE_PROJECT_DIR}` variant from [`anti-slop/hooks/hooks.example.json`](anti-slop/hooks/hooks.example.json) instead.
 
 Set `ANTI_SLOP_HOOK_BLOCK=1` to make the hook blocking instead of advisory. There is also a dependency-free static scanner for existing repos:
 

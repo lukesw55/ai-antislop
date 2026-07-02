@@ -27,7 +27,7 @@ AI slop is low-quality AI-generated content that prioritizes speed, volume, supe
 
 - **S1 formulaic/generic** — template-shaped prose, predictable headings, generic names, decorative structure, boilerplate phrasing.
 - **S2 false/hallucinated/inconsistent** — invented APIs, fake test results, unsupported README claims, impossible media claims, contradictions.
-- **S3 clickbait/attention-bait** — exaggerated, manipulative, viral-style, emotionally artificial, or engagement-optimized content.
+- **S3 clickbait/attention-bait** — exaggerated, manipulative, "viral-style", emotionally artificial, or engagement-optimized content.
 - **S4 workplace distraction** — polished but low-value docs, summaries, plans, meeting notes, or repo files that create review/fact-checking work.
 
 ## Severity levels

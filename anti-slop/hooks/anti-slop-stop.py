@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Optional Claude Code Stop hook for anti-slop feedback.
 
-Reads Claude Code hook JSON from stdin. If the final assistant message contains
-obvious slop patterns, returns non-error additionalContext so Claude can revise.
-Set ANTI_SLOP_HOOK_BLOCK=1 to use a blocking decision instead.
+Reads Claude Code hook JSON from stdin. The Stop payload does not carry the
+assistant's message, so the hook extracts the last assistant text from the
+transcript_path JSONL. If that message contains obvious slop patterns, the hook
+returns non-error additionalContext so Claude can revise. Set
+ANTI_SLOP_HOOK_BLOCK=1 to use a blocking decision instead.
 """
 from __future__ import annotations
 
@@ -24,6 +26,8 @@ PATTERNS: list[tuple[str, str, str, re.Pattern[str]]] = [
     ("S2", "BLOCK", "possible unverified verification claim", re.compile(r"\b(tests? pass(?:ed)?|build pass(?:ed|es)?|validated successfully|verified successfully|all checks pass(?:ed)?)\b", re.I)),
 ]
 
+FENCE_RE = re.compile(r"^(```+|~~~+).*$\n(?:.*\n)*?^\1\s*$", re.M)
+
 
 @dataclass
 class Finding:
@@ -31,6 +35,50 @@ class Finding:
     severity: str
     message: str
     excerpt: str
+
+
+def strip_code_fences(message: str) -> str:
+    """Drop fenced code blocks: code the user asked for is not reply slop."""
+    return FENCE_RE.sub("", message)
+
+
+def last_assistant_text(transcript_path: str) -> str:
+    """Extract the text of the last assistant message from a transcript JSONL.
+
+    Transcript lines are JSON objects; assistant turns carry
+    {"type": "assistant", "message": {"content": [{"type": "text", ...}]}}.
+    Returns "" when the file is missing, unreadable, or has no assistant text.
+    """
+    try:
+        with open(transcript_path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return ""
+
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = (entry.get("message") or {}).get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        else:
+            continue
+        if text.strip():
+            return text
+    return ""
 
 
 def detect(message: str) -> list[Finding]:
@@ -53,11 +101,18 @@ def main() -> int:
     if payload.get("stop_hook_active"):
         return 0
 
+    # The Stop payload has no message field today; keep it as a fast path in
+    # case a future Claude Code version adds one.
     message = payload.get("last_assistant_message") or ""
     if not isinstance(message, str) or not message.strip():
+        transcript_path = payload.get("transcript_path") or ""
+        if not isinstance(transcript_path, str) or not transcript_path:
+            return 0
+        message = last_assistant_text(transcript_path)
+    if not message.strip():
         return 0
 
-    findings = detect(message)
+    findings = detect(strip_code_fences(message))
     if not findings:
         return 0
 
