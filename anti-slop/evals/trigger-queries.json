@@ -1,0 +1,18 @@
+{
+  "should_trigger": [
+    "remove AI slop from this README",
+    "review this diff for unsupported repo claims",
+    "tira o ruído desse PR description",
+    "this generated file feels ChatGPT-ish",
+    "scan the repo for unrequested summary files",
+    "make this implementation note useful without losing constraints",
+    "review these image captions for fake evidence"
+  ],
+  "should_not_trigger_or_keep_light": [
+    "return only this JSON object unchanged",
+    "what is 2+2?",
+    "paste the raw log exactly",
+    "write a detailed onboarding runbook; verbosity is okay",
+    "keep this compliance section explicit and complete"
+  ]
+}

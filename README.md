@@ -6,7 +6,7 @@ Claude Code skill that runs as a quality **gate** before any code, doc, PR text,
 
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Skill](https://img.shields.io/badge/Claude%20Code-skill-blue)
-![Patterns](https://img.shields.io/badge/slop%20patterns-22-purple)
+![Patterns](https://img.shields.io/badge/slop%20patterns-44-purple)
 ![Modes](https://img.shields.io/badge/modes-3-orange)
 
 ---
@@ -42,30 +42,38 @@ cp -r ai-antislop/anti-slop ~/.claude/skills/
 
 Restart Claude Code. Skill auto-loads via the `Skill` tool when triggers fire.
 
-For repo-wide enforcement, wire it into a `UserPromptSubmit` hook so every prompt activates the gate:
+For runtime enforcement, wire the bundled Stop hook — it scans the final assistant message for slop patterns and asks Claude to revise before stopping (see [`anti-slop/hooks/hooks.example.json`](anti-slop/hooks/hooks.example.json)):
 
 ```jsonc
-// ~/.claude/settings.json
+// .claude/settings.json
 {
   "hooks": {
-    "UserPromptSubmit": [{ "command": "echo 'ANTI-SLOP GATE ACTIVE. Run anti-slop in Gate mode before output.'" }]
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/skills/anti-slop/hooks/anti-slop-stop.py", "timeout": 10 }] }]
   }
 }
+```
+
+Set `ANTI_SLOP_HOOK_BLOCK=1` to make the hook blocking instead of advisory. There is also a dependency-free static scanner for existing repos:
+
+```bash
+python3 anti-slop/scripts/scan_repo_slop.py path/to/repo --fail-on-block
 ```
 
 ---
 
 ## What it kills
 
-22 patterns across three surfaces.
+44 patterns across five surfaces, organized under an S1–S4 slop taxonomy (formulaic, false, clickbait, workplace distraction).
 
 | Surface | Patterns | Examples |
 |---|---|---|
 | **Code (A1–A10)** | 10 | boundary guards on internal callers, try/except without recovery, single-use wrappers, generic names (`data`, `Helper`, `Manager`), restating comments, narration logs, premature configurability, dead compat aliases, type inflation, banner regions |
-| **Docs / markdown (B1–B6)** | 6 | template sections (Overview/Details/Conclusion), README that restates the repo name, label-colon bullets, forced symmetry, static metadata nobody maintains, decorative emoji |
-| **Chat replies (C1–C6)** | 6 | restating the prompt, tool narration, sycophantic openers, trailing summaries, unsolicited follow-up offers, over-structured small answers |
+| **Docs / markdown (B1–B10)** | 10 | template sections (Overview/Details/Conclusion), README that restates the repo name, label-colon bullets, forced symmetry, static metadata nobody maintains, decorative emoji, PR/commit slop, ADR slop, changelog slop, ticket slop |
+| **Chat replies (C1–C9)** | 9 | restating the prompt, tool narration, sycophantic openers, trailing summaries, unsolicited follow-up offers, over-structured small answers, unsupported confidence, useless progress updates, multilingual triggers |
+| **Repo contamination (D1–D8)** | 8 | unrequested artifacts, fake maturity signals, template docs, unused scaffolding, generated assets without provenance, unsupported repo claims, summary files that restate work, abstractions with no caller |
+| **Multimodal (M1–M7)** | 7 | impossible visual claims, distorted AI media artifacts, clickbait media framing, missing provenance, prompt slop, transcript/audio slop, alt text slop |
 
-Each pattern in [`anti-slop/SKILL.md`](anti-slop/SKILL.md) ships with concrete slop → fix examples in real code.
+Each pattern ships with concrete slop → fix examples in [`anti-slop/references/`](anti-slop/references/), loaded on demand so the base [`SKILL.md`](anti-slop/SKILL.md) stays lean.
 
 ---
 
@@ -86,7 +94,7 @@ Auto-fires when the user says (EN/PT):
 - "remove AI slop" · "kill the slop" · "this looks AI-generated"
 - "clean this up" · "less verbose" · "make it leaner"
 - "tira o ruído" · "tá com cara de ChatGPT" · "essa resposta tá com cara de IA"
-- "corta o boilerplate" · "esse código tá com slop"
+- "corta o boilerplate" · "esse código tá com slop" · "menos genérico" · "sem firula"
 
 Also fires automatically before any non-trivial generation: code edits, new files, comments, docstrings, README sections, PR/commit/ticket text, ADRs, plans, or replies longer than two sentences.
 
@@ -96,24 +104,35 @@ Skips on raw logs, JSON, CSV, one-liners, and exact-spec mechanical edits.
 
 ## Non-negotiables
 
-1. Ship the smallest useful change.
-2. Trust internal contracts unless a boundary is involved.
-3. Delete generic structure instead of polishing it.
-4. Do not create files the user did not ask for.
-5. Do not narrate obvious tool use.
-6. Do not add abstractions for hypothetical reuse.
-7. Preserve substance while removing slop.
+1. Preserve behavior, evidence, constraints, edge cases, security checks, citations, and operational detail.
+2. Remove generic structure, unsupported claims, fake maturity signals, and decorative polish.
+3. Do not create files, abstractions, wrappers, docs, metadata, or config without a permanent repo purpose.
+4. Trust internal contracts unless code crosses a boundary: user input, public API, filesystem, network, auth, payment, migration, or security.
+5. Replace vague praise and broad claims with repo-grounded facts, or mark them as assumptions.
+6. Prefer a small useful change over a polished-looking artifact.
+7. Anti-slop is not blind minimalism.
 
-> If removing "AI slop" removes evidence, behavior, constraints, or useful context, you removed too much.
+> If deletion removes load-bearing context, you removed too much.
 
 ---
 
 ## Layout
 
-```
+```text
 ai-antislop/
+├── LICENSE
 └── anti-slop/
-    └── SKILL.md     # frontmatter + 22 patterns + 3 modes
+    ├── SKILL.md                 # frontmatter + gate rules + 3 modes
+    ├── references/              # pattern catalogues, loaded on demand
+    │   ├── slop-taxonomy.md     # S1–S4 classes + severity mapping
+    │   ├── code-patterns.md     # A1–A10
+    │   ├── docs-patterns.md     # B1–B10
+    │   ├── response-patterns.md # C1–C9
+    │   ├── repo-contamination.md# D1–D8
+    │   └── multimodal-patterns.md # M1–M7
+    ├── hooks/                   # optional Stop hook + example config
+    ├── scripts/                 # scan_repo_slop.py static scanner
+    └── evals/                   # test prompts + trigger queries
 ```
 
 Mirrors [anthropics/skills](https://github.com/anthropics/skills): one folder per skill, each with a `SKILL.md` carrying YAML frontmatter (`name`, `description`). Drop into `~/.claude/skills/` and Claude picks it up.

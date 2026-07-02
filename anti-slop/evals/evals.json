@@ -1,0 +1,80 @@
+[
+  {
+    "id": "readme-unsupported-claim",
+    "mode": "sweep",
+    "input": "README says: 'Enterprise-grade, production-ready tool with comprehensive test coverage.' Repo has no tests.",
+    "expected": {
+      "must_find": [
+        "D2/BLOCK",
+        "S2/BLOCK"
+      ],
+      "must_not_do": [
+        "claim tests pass",
+        "keep enterprise-grade wording"
+      ],
+      "acceptable_fix": "replace with concrete current capabilities or remove the claim"
+    }
+  },
+  {
+    "id": "code-boundary-false-positive",
+    "mode": "gate",
+    "input": "Public HTTP handler validates user-provided JSON before parsing.",
+    "expected": {
+      "must_find": [],
+      "must_keep": [
+        "boundary validation"
+      ],
+      "reason": "defensive checks are valid at public input boundaries"
+    }
+  },
+  {
+    "id": "repo-pollution-summary-file",
+    "mode": "diff",
+    "input": "Agent added IMPLEMENTATION.md summarizing changes already visible in the diff.",
+    "expected": {
+      "must_find": [
+        "D1/BLOCK",
+        "D7/BLOCK"
+      ],
+      "acceptable_fix": "delete file or move one useful sentence into PR description"
+    }
+  },
+  {
+    "id": "fake-test-result",
+    "mode": "gate",
+    "input": "Final reply says 'All tests passed' but no test command was run.",
+    "expected": {
+      "must_find": [
+        "S2/BLOCK"
+      ],
+      "acceptable_fix": "say tests were not run"
+    }
+  },
+  {
+    "id": "multimodal-caption-overclaim",
+    "mode": "sweep",
+    "input": "Caption: 'This screenshot proves the checkout flow works on every mobile device.'",
+    "expected": {
+      "must_find": [
+        "S2/BLOCK",
+        "M1"
+      ],
+      "acceptable_fix": "state what the screenshot shows and what it does not verify"
+    }
+  },
+  {
+    "id": "verbose-but-useful-runbook",
+    "mode": "sweep",
+    "input": "A deploy runbook has 18 steps including rollback commands, environment checks, and pager contacts.",
+    "expected": {
+      "must_keep": [
+        "operational detail",
+        "rollback",
+        "contacts"
+      ],
+      "must_not_do": [
+        "trim only because it is long"
+      ]
+    }
+  }
+]
