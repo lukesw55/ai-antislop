@@ -11,6 +11,7 @@ import fnmatch
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -99,7 +100,36 @@ def is_text_file(path: Path) -> bool:
     return False
 
 
+def git_tracked_files(root: Path) -> list[Path] | None:
+    """Return files git considers part of the repo, or None if not applicable.
+
+    Uses `git ls-files` with --exclude-standard so .gitignored paths (build
+    output, vendored deps, local scratch/fixtures) are skipped — scanning them
+    for slop is noise a real user does not want. Returns None when root is not
+    a git worktree or git is unavailable, so the caller falls back to walking.
+    """
+    if not (root / ".git").exists():
+        return None
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    names = out.stdout.decode("utf-8", errors="replace").split("\0")
+    return [root / n for n in names if n]
+
+
 def iter_files(root: Path) -> Iterable[Path]:
+    tracked = git_tracked_files(root)
+    if tracked is not None:
+        for path in tracked:
+            if is_text_file(path) and path.is_file():
+                yield path
+        return
     for current, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".DS_Store")]
         for name in filenames:

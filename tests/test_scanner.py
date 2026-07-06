@@ -85,6 +85,22 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("D1", {f["code"] for f in findings_of(proc)})
 
+    def test_gitignored_paths_skipped_in_git_repo(self):
+        import shutil
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "-C", tmp, "init", "-q"], check=True, timeout=30)
+            (root / ".gitignore").write_text("scratch/\n", encoding="utf-8")
+            (root / "README.md").write_text("# clean\n\nJust the facts.\n", encoding="utf-8")
+            scratch = root / "scratch"
+            scratch.mkdir()
+            (scratch / "fixture.md").write_text("Enterprise-grade, battle-tested.\n", encoding="utf-8")
+            proc = run_scanner(tmp, "--fail-on-block")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(findings_of(proc), [])
+
     def test_own_repo_scan_is_block_clean(self):
         repo = str(SCANNER.parent.parent.parent)
         proc = subprocess.run(
