@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/skills/anti-slop/hooks/anti-slop-stop.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/skills/anti-slop/hooks/anti-slop-stop.py\"",
             "timeout": 10
           }
         ]

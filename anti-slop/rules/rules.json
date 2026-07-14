@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "D7-summary-file",
+      "code": "D7",
+      "impact": "critical",
+      "decision": "BLOCK",
+      "scopes": ["repository"],
+      "kind": "filename",
+      "filenames": ["SUMMARY.md"],
+      "message": "summary file is usually agent residue unless explicitly maintained",
+      "fix": "Delete it or move durable information into an existing maintained document."
+    },
+    {
+      "id": "D1-plan-file",
+      "code": "D1",
+      "impact": "critical",
+      "decision": "BLOCK",
+      "scopes": ["repository"],
+      "kind": "filename",
+      "filenames": ["PLAN.md"],
+      "message": "plan file is usually temporary unless part of project workflow",
+      "fix": "Delete it or confirm that the repository intentionally maintains plans."
+    },
+    {
+      "id": "D1-implementation-file",
+      "code": "D1",
+      "impact": "critical",
+      "decision": "BLOCK",
+      "scopes": ["repository"],
+      "kind": "filename",
+      "filenames": ["IMPLEMENTATION.md"],
+      "message": "implementation narrative is often agent residue",
+      "fix": "Move necessary operational detail into existing documentation or the change description."
+    },
+    {
+      "id": "D1-notes-file",
+      "code": "D1",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["repository"],
+      "kind": "filename",
+      "filenames": ["NOTES.md"],
+      "message": "notes file needs a clear permanent purpose",
+      "fix": "Keep only maintained information with an explicit owner and purpose."
+    },
+    {
+      "id": "D7-changes-file",
+      "code": "D7",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["repository"],
+      "kind": "filename",
+      "filenames": ["CHANGES.md"],
+      "message": "prefer a maintained changelog or change description",
+      "fix": "Move durable release history to CHANGELOG.md; otherwise remove the file."
+    },
+    {
+      "id": "D2-maturity-claim",
+      "code": "D2",
+      "impact": "critical",
+      "decision": "BLOCK",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "\\b(production[- ]ready|enterprise[- ]grade|battle[- ]tested|secure by default|fully automated)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "maturity claim needs evidence",
+      "fix": "Replace the claim with a verified capability, limitation, or test result."
+    },
+    {
+      "id": "D2-polish-word",
+      "code": "D2",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "\\b(robust|seamless|comprehensive|powerful|flexible|scalable|world[- ]class|game[- ]changing)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "broad polish word; replace it with a concrete fact",
+      "fix": "Name the specific behavior or remove the adjective."
+    },
+    {
+      "id": "S2-verification-claim",
+      "code": "S2",
+      "impact": "critical",
+      "decision": "BLOCK",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "\\b(tests? pass(?:ed)?|build pass(?:ed|es)?|validated successfully|verified successfully|all checks pass(?:ed)?)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "verification claim needs command or source evidence",
+      "fix": "Cite the command and result, or say that verification was not run."
+    },
+    {
+      "id": "S3-attention-bait",
+      "code": "S3",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "\\b(shocking|unbelievable|viral|mind[- ]blowing|revolutionary|magic|10x)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "attention-bait phrasing",
+      "fix": "State the observable result without promotional framing."
+    },
+    {
+      "id": "S1-template-heading",
+      "code": "S1",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "^\\s{0,3}#{1,4}\\s+(Overview|Details|Conclusion|Next Steps|Key Features|Benefits)\\s*$",
+      "flags": ["IGNORECASE", "MULTILINE"],
+      "message": "template heading",
+      "fix": "Use a subject-specific heading or remove the unnecessary section."
+    },
+    {
+      "id": "S1-label-colon-bullet",
+      "code": "S1",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "^\\s*[-*]\\s+\\*\\*[^*]{2,40}:\\*\\*\\s+",
+      "flags": ["MULTILINE"],
+      "message": "repeated label-colon bullet rhythm",
+      "fix": "Use direct prose or bullets whose structure follows the information."
+    },
+    {
+      "id": "D5-generated-media-provenance",
+      "code": "D5",
+      "impact": "minor",
+      "decision": "FLAG",
+      "scopes": ["repository", "response"],
+      "kind": "regex",
+      "pattern": "\\b(generated image|generated video|generated audio|synthetic media|image prompt|voiceover|transcript:)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "generated asset or synthetic content needs provenance",
+      "fix": "Record the source, generator, date, and relevant usage rights."
+    },
+    {
+      "id": "C3-sycophantic-opener",
+      "code": "C3",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["response"],
+      "kind": "regex",
+      "pattern": "^\\s*(great question|absolutely|you'?re absolutely right|i'?d be happy to)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "sycophantic opener",
+      "fix": "Start with the answer or the verified outcome."
+    },
+    {
+      "id": "C2-tool-narration",
+      "code": "C2",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["response"],
+      "kind": "regex",
+      "pattern": "\\b(i'?ll now|i am now|let me now|first,? i'?ll|next,? i'?ll)\\b",
+      "flags": ["IGNORECASE"],
+      "message": "tool narration",
+      "fix": "Report useful progress or the result instead of narrating routine actions."
+    },
+    {
+      "id": "C4-trailing-summary",
+      "code": "C4",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["response"],
+      "kind": "regex",
+      "pattern": "^\\s*#{1,3}\\s*(Summary|Recap|Conclusion)\\s*$",
+      "flags": ["IGNORECASE", "MULTILINE"],
+      "message": "generic summary heading",
+      "fix": "End after the result unless a recap adds new decision-relevant information."
+    },
+    {
+      "id": "C5-follow-up-bundle",
+      "code": "C5",
+      "impact": "major",
+      "decision": "TRIM",
+      "scopes": ["response"],
+      "kind": "regex",
+      "pattern": "\\blet me know if you (want|would like).*(also|add|further|next)\\b",
+      "flags": ["IGNORECASE", "DOTALL"],
+      "message": "unsolicited follow-up bundle",
+      "fix": "Stop after the requested result unless a concrete next action is required."
+    }
+  ]
+}

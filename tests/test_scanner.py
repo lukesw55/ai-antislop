@@ -1,5 +1,6 @@
 """Tests for scripts/scan_repo_slop.py — run via: python3 -m unittest discover tests"""
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,8 +11,11 @@ SCANNER = Path(__file__).resolve().parent.parent / "anti-slop" / "scripts" / "sc
 
 
 def run_scanner(*args):
+    command = [sys.executable, str(SCANNER), *args]
+    if "--json" not in args and "--json-v2" not in args:
+        command.append("--json")
     return subprocess.run(
-        [sys.executable, str(SCANNER), *args, "--json"],
+        command,
         capture_output=True, text=True, timeout=60,
     )
 
@@ -31,6 +35,64 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         codes = {f["code"] for f in findings_of(proc)}
         self.assertIn("D2", codes)
+
+    def test_json_v2_reports_multiple_findings_and_truncation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "README.md").write_text(
+                "A production-ready, robust, revolutionary tool using a generated image.\n",
+                encoding="utf-8",
+            )
+            proc = run_scanner(tmp, "--json-v2", "--max-findings", "2")
+            again = run_scanner(tmp, "--json-v2", "--max-findings", "2")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(len(payload["findings"]), 2)
+        self.assertGreaterEqual(payload["summary"]["total_findings"], 4)
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(
+            payload["omitted_findings"],
+            payload["summary"]["total_findings"] - len(payload["findings"]),
+        )
+        self.assertIn("output truncated", proc.stderr)
+        self.assertIn("rule_id", payload["findings"][0])
+        self.assertIn("impact", payload["findings"][0])
+        self.assertEqual(proc.stdout, again.stdout)
+
+    def test_fail_on_thresholds_include_stricter_decisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = {
+                "block.md": ("production-ready\n", {"block": 2, "trim": 2, "flag": 2}),
+                "trim.md": ("A robust tool.\n", {"block": 0, "trim": 2, "flag": 2}),
+                "flag.md": ("A generated image.\n", {"block": 0, "trim": 0, "flag": 2}),
+            }
+            for filename, (text, expected) in cases.items():
+                path = root / filename
+                path.write_text(text, encoding="utf-8")
+                for threshold, returncode in expected.items():
+                    with self.subTest(filename=filename, threshold=threshold):
+                        proc = run_scanner(str(path), "--fail-on", threshold)
+                        self.assertEqual(proc.returncode, returncode, proc.stderr)
+
+    def test_max_file_bytes_skips_content_and_reports_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "large.md")
+            path.write_text("production-ready " + ("x" * 128), encoding="utf-8")
+            proc = run_scanner(
+                str(path),
+                "--json-v2",
+                "--max-file-bytes",
+                "16",
+                "--fail-on-block",
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["findings"], [])
+        self.assertEqual(payload["summary"]["files_skipped_too_large"], 1)
+        self.assertIn("content skipped", proc.stderr)
 
     def test_quoted_mention_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -61,15 +123,20 @@ class ScannerTests(unittest.TestCase):
             proc = run_scanner(tmp)
         self.assertEqual(findings_of(proc), [])
 
-    def test_default_exclude_claude_skills(self):
+    def test_default_excludes_hybrid_runtime_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
-            vendored = Path(tmp, ".claude", "skills", "anti-slop")
-            vendored.mkdir(parents=True)
-            (vendored / "doc.md").write_text("Fully automated, production-ready.\n", encoding="utf-8")
+            directories = {".agents", ".claude", ".codex", ".cursor"}
+            for directory in directories:
+                vendored = Path(tmp, directory)
+                vendored.mkdir()
+                (vendored / "doc.md").write_text(
+                    "Fully automated, production-ready.\n", encoding="utf-8"
+                )
             proc = run_scanner(tmp)
             self.assertEqual(findings_of(proc), [])
             proc = run_scanner(tmp, "--no-default-excludes")
-            self.assertNotEqual(findings_of(proc), [])
+            paths = {finding["path"].split("/", 1)[0] for finding in findings_of(proc)}
+            self.assertEqual(paths, directories)
 
     def test_exclude_glob_option(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -86,7 +153,6 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("D1", {f["code"] for f in findings_of(proc)})
 
     def test_gitignored_paths_skipped_in_git_repo(self):
-        import shutil
         if not shutil.which("git"):
             self.skipTest("git not available")
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,6 +165,59 @@ class ScannerTests(unittest.TestCase):
             (scratch / "fixture.md").write_text("Enterprise-grade, battle-tested.\n", encoding="utf-8")
             proc = run_scanner(tmp, "--fail-on-block")
         self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(findings_of(proc), [])
+
+    def test_git_worktree_file_respects_ignored_paths(self):
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repository = root / "repository"
+            worktree = root / "linked-worktree"
+            repository.mkdir()
+            subprocess.run(
+                ["git", "-C", str(repository), "init", "-q"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            (repository / ".gitignore").write_text("scratch/\n", encoding="utf-8")
+            (repository / "README.md").write_text("# Facts\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repository), "add", "."],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(repository),
+                    "-c", "user.name=Anti Slop Tests",
+                    "-c", "user.email=tests@example.invalid",
+                    "commit", "-qm", "fixture",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(repository), "worktree", "add", "-q",
+                    "-b", "scanner-linked-test", str(worktree),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertTrue((worktree / ".git").is_file())
+            scratch = worktree / "scratch"
+            scratch.mkdir()
+            (scratch / "ignored.md").write_text(
+                "Enterprise-grade and production-ready.\n", encoding="utf-8"
+            )
+            proc = run_scanner(str(worktree), "--fail-on-block")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(findings_of(proc), [])
 
     def test_own_repo_scan_is_block_clean(self):

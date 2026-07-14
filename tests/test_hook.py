@@ -1,6 +1,7 @@
 """Tests for hooks/anti-slop-stop.py — run via: python3 -m unittest discover tests"""
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,54 @@ class HookTests(unittest.TestCase):
         context = out["hookSpecificOutput"]["additionalContext"]
         self.assertIn("C3", context)
         self.assertIn("S2", context)
+
+    def test_limits_feedback_to_five_findings_and_reports_omitted_count(self):
+        message = "\n".join((
+            "Great question! I'll now explain.",
+            "This production-ready, robust, revolutionary tool uses a generated image. All tests passed.",
+            "# Overview",
+            "- **Feature:** detail",
+            "Let me know if you want me to also add more.",
+            "# Summary",
+        ))
+        proc = run_hook({
+            "hook_event_name": "Stop",
+            "last_assistant_message": message,
+        })
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        finding_lines = re.findall(r"(?m)^- [A-Z][0-9]/", context)
+        self.assertEqual(len(finding_lines), 5, context)
+        self.assertRegex(context, r"(?m)^- [1-9][0-9]* additional findings? omitted\.$")
+
+    def test_reads_only_bounded_tail_and_finds_last_large_transcript_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "transcript.jsonl"
+            early = {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Great question! production-ready."}]},
+            }
+            padding = {
+                "type": "user",
+                "message": {"content": "x" * (2 * 1024 * 1024 + 4096)},
+            }
+            final = {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "All tests passed."}]},
+            }
+            transcript.write_text(
+                "\n".join(json.dumps(entry) for entry in (early, padding, final)) + "\n",
+                encoding="utf-8",
+            )
+            self.assertGreater(transcript.stat().st_size, 2 * 1024 * 1024)
+            proc = run_hook({"hook_event_name": "Stop", "transcript_path": str(transcript)})
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("S2", context)
+        self.assertNotIn("C3", context)
+        self.assertNotIn("D2", context)
 
     def test_uses_last_assistant_message_not_earlier_ones(self):
         with tempfile.TemporaryDirectory() as tmp:
