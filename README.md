@@ -1,8 +1,27 @@
 # anti-slop
 
-`anti-slop` is an Agent Skill for reviewing repository-facing output. It combines an instruction workflow for semantic review with an optional Python engine for deterministic findings. The skill is distributed from one canonical directory to Claude Code, Codex, and Cursor.
+**A portable quality gate for code, docs, diffs, and agent responses that refuses to invent confidence.**
 
-The core rule is simple: remove unsupported or generic material without deleting behavior, evidence, constraints, boundary checks, citations, or operational detail.
+[Claude Code](https://code.claude.com/docs/en/skills) / [Codex](https://developers.openai.com/codex/skills) / [Cursor](https://cursor.com/docs/rules.md) / [Hallmark reference](https://github.com/Nutlope/hallmark)
+
+anti-slop keeps useful detail and removes the signals that make generated work expensive to review: unsupported maturity claims, template-shaped prose, disposable repository files, and narration that adds no decision.
+
+| 44 | 16 | 3 |
+| ---: | ---: | ---: |
+| semantic patterns in the catalog | executable registry detectors | review modes: Gate, Sweep, Diff |
+
+The catalog is the context layer. The registry is the mechanical layer. Neither treats a match as proof by itself.
+
+## What it does
+
+| Surface | Typical question | Default action |
+|---|---|---|
+| Code and docs | Is this structure necessary, supported, and maintained? | Preserve behavior; trim ceremony. |
+| Repository artifacts | Does this file have a current caller, owner, or durable purpose? | Remove residue; keep operational context. |
+| Assistant responses | Is this claim evidenced, or is it just confident wording? | State the verified result and its limits. |
+| Media and metadata | Can the source, provenance, and scope be checked? | Record provenance; narrow the claim. |
+
+The scanner is read-only. The skill can rewrite when the selected mode and user scope authorize it.
 
 ## Execution model
 
