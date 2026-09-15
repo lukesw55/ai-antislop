@@ -65,6 +65,7 @@
       "kind": "regex",
       "pattern": "\\b(production[- ]ready|enterprise[- ]grade|battle[- ]tested|secure by default|fully automated)\\b",
       "flags": ["IGNORECASE"],
+      "unless_preceded_by": ["not", "not yet", "never", "isn't", "aren't", "wasn't", "far from"],
       "message": "maturity claim needs evidence",
       "fix": "Replace the claim with a verified capability, limitation, or test result."
     },
@@ -89,6 +90,7 @@
       "kind": "regex",
       "pattern": "\\b(tests? pass(?:ed)?|build pass(?:ed|es)?|validated successfully|verified successfully|all checks pass(?:ed)?)\\b",
       "flags": ["IGNORECASE"],
+      "unless_preceded_by": ["if", "when", "whenever", "until", "once", "unless", "whether", "not", "never", "no", "ensure", "make sure", "so that"],
       "message": "verification claim needs command or source evidence",
       "fix": "Cite the command and result, or say that verification was not run."
     },
@@ -101,6 +103,7 @@
       "kind": "regex",
       "pattern": "\\b(shocking|unbelievable|viral|mind[- ]blowing|revolutionary|magic|10x)\\b",
       "flags": ["IGNORECASE"],
+      "unless_followed_by": ["numbers?", "multipliers?"],
       "message": "attention-bait phrasing",
       "fix": "State the observable result without promotional framing."
     },
@@ -111,7 +114,7 @@
       "decision": "TRIM",
       "scopes": ["repository", "response"],
       "kind": "regex",
-      "pattern": "^\\s{0,3}#{1,4}\\s+(Overview|Details|Conclusion|Next Steps|Key Features|Benefits)\\s*$",
+      "pattern": "^[ \\t]{0,3}#{1,4}[ \\t]+(Overview|Details|Conclusion|Next Steps|Key Features|Benefits)[ \\t]*\\r?$",
       "flags": ["IGNORECASE", "MULTILINE"],
       "message": "template heading",
       "fix": "Use a subject-specific heading or remove the unnecessary section."
@@ -122,9 +125,10 @@
       "impact": "major",
       "decision": "TRIM",
       "scopes": ["repository", "response"],
-      "kind": "regex",
-      "pattern": "^\\s*[-*]\\s+\\*\\*[^*]{2,40}:\\*\\*\\s+",
-      "flags": ["MULTILINE"],
+      "kind": "sequence",
+      "line_pattern": "^[ \\t]*[-*][ \\t]+\\*\\*[^*]{2,40}:\\*\\*[ \\t]+\\S",
+      "flags": [],
+      "min_consecutive": 3,
       "message": "repeated label-colon bullet rhythm",
       "fix": "Use direct prose or bullets whose structure follows the information."
     },
@@ -147,7 +151,7 @@
       "decision": "TRIM",
       "scopes": ["response"],
       "kind": "regex",
-      "pattern": "^\\s*(great question|absolutely|you'?re absolutely right|i'?d be happy to)\\b",
+      "pattern": "^(?:[ \\t]*\\r?\\n)*[ \\t]*(great question|absolutely|you'?re absolutely right|i'?d be happy to)\\b",
       "flags": ["IGNORECASE"],
       "message": "sycophantic opener",
       "fix": "Start with the answer or the verified outcome."
@@ -171,7 +175,7 @@
       "decision": "TRIM",
       "scopes": ["response"],
       "kind": "regex",
-      "pattern": "^\\s*#{1,3}\\s*(Summary|Recap|Conclusion)\\s*$",
+      "pattern": "^[ \\t]*#{1,3}[ \\t]*(Summary|Recap|Conclusion)[ \\t]*\\r?$",
       "flags": ["IGNORECASE", "MULTILINE"],
       "message": "generic summary heading",
       "fix": "End after the result unless a recap adds new decision-relevant information."

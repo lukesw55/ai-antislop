@@ -16,14 +16,39 @@ DEFAULT_REGISTRY = SKILL_ROOT / "rules" / "rules.json"
 
 VALID_DECISIONS = {"BLOCK", "TRIM", "FLAG"}
 VALID_IMPACTS = {"critical", "major", "minor"}
-VALID_KINDS = {"filename", "regex"}
+VALID_KINDS = {"filename", "regex", "sequence"}
 VALID_SCOPES = {"repository", "response"}
 FLAG_VALUES = {
     "IGNORECASE": re.IGNORECASE,
     "MULTILINE": re.MULTILINE,
     "DOTALL": re.DOTALL,
 }
+SEQUENCE_FLAGS = {"IGNORECASE"}
 DECISION_ORDER = {"BLOCK": 0, "TRIM": 1, "FLAG": 2}
+KNOWN_KEYS = {
+    "id",
+    "code",
+    "impact",
+    "decision",
+    "scopes",
+    "kind",
+    "message",
+    "fix",
+    "pattern",
+    "line_pattern",
+    "flags",
+    "filenames",
+    "min_consecutive",
+    "unless_preceded_by",
+    "unless_followed_by",
+    "notes",
+}
+
+# Whitespace and Markdown emphasis markers allowed between an exclusion word
+# and the matched text on the same line.
+_EXCLUSION_GAP = r"[\s*_`~]*"
+_PRECEDED_TEMPLATE = r"(?<![\w'])(?:%s)" + _EXCLUSION_GAP + r"\Z"
+_FOLLOWED_TEMPLATE = r"\A" + _EXCLUSION_GAP + r"(?:%s)(?![\w'])"
 
 
 class RegistryError(ValueError):
@@ -42,6 +67,9 @@ class Rule:
     fix: str
     pattern: re.Pattern[str] | None = None
     filenames: tuple[str, ...] = ()
+    min_consecutive: int = 0
+    preceded_exclusion: re.Pattern[str] | None = None
+    followed_exclusion: re.Pattern[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -88,11 +116,56 @@ def _require_text(raw: dict[str, object], key: str, rule_id: str) -> str:
     return value
 
 
+def _compile_flags(raw: dict[str, object], rule_id: str, allowed: set[str]) -> int:
+    raw_flags = raw.get("flags", [])
+    if not isinstance(raw_flags, list) or not all(isinstance(flag, str) for flag in raw_flags):
+        raise RegistryError(f"{rule_id}: flags must be a list of strings")
+    unknown_flags = set(raw_flags) - FLAG_VALUES.keys()
+    if unknown_flags:
+        raise RegistryError(f"{rule_id}: unknown flags {sorted(unknown_flags)}")
+    disallowed = set(raw_flags) - allowed
+    if disallowed:
+        raise RegistryError(
+            f"{rule_id}: flags {sorted(disallowed)} are not allowed for {raw.get('kind')} rules"
+        )
+    flags = 0
+    for flag in raw_flags:
+        flags |= FLAG_VALUES[flag]
+    return flags
+
+
+def _compile_pattern(source: str, flags: int, rule_id: str, key: str) -> re.Pattern[str]:
+    try:
+        return re.compile(source, flags)
+    except re.error as exc:
+        raise RegistryError(f"{rule_id}: invalid {key} regex: {exc}") from exc
+
+
+def _compile_exclusion(
+    raw: dict[str, object], key: str, rule_id: str, template: str
+) -> re.Pattern[str] | None:
+    if key not in raw:
+        return None
+    items = raw[key]
+    if (
+        not isinstance(items, list)
+        or not items
+        or not all(isinstance(item, str) and item.strip() for item in items)
+    ):
+        raise RegistryError(f"{rule_id}: {key} must be a non-empty list of strings")
+    alternatives = "|".join(f"(?:{item})" for item in items)
+    return _compile_pattern(template % alternatives, re.IGNORECASE, rule_id, key)
+
+
 def _compile_rule(raw: object, index: int) -> Rule:
     if not isinstance(raw, dict):
         raise RegistryError(f"rules[{index}] must be an object")
 
     rule_id = _require_text(raw, "id", f"rules[{index}]")
+    unknown_keys = set(raw) - KNOWN_KEYS
+    if unknown_keys:
+        raise RegistryError(f"{rule_id}: unknown keys {sorted(unknown_keys)}")
+
     code = _require_text(raw, "code", rule_id)
     impact = _require_text(raw, "impact", rule_id)
     decision = _require_text(raw, "decision", rule_id)
@@ -118,21 +191,19 @@ def _compile_rule(raw: object, index: int) -> Rule:
 
     pattern = None
     filenames: tuple[str, ...] = ()
+    min_consecutive = 0
     if kind == "regex":
         source = _require_text(raw, "pattern", rule_id)
-        raw_flags = raw.get("flags", [])
-        if not isinstance(raw_flags, list) or not all(isinstance(flag, str) for flag in raw_flags):
-            raise RegistryError(f"{rule_id}: flags must be a list of strings")
-        unknown_flags = set(raw_flags) - FLAG_VALUES.keys()
-        if unknown_flags:
-            raise RegistryError(f"{rule_id}: unknown flags {sorted(unknown_flags)}")
-        flags = 0
-        for flag in raw_flags:
-            flags |= FLAG_VALUES[flag]
-        try:
-            pattern = re.compile(source, flags)
-        except re.error as exc:
-            raise RegistryError(f"{rule_id}: invalid regex: {exc}") from exc
+        flags = _compile_flags(raw, rule_id, set(FLAG_VALUES))
+        pattern = _compile_pattern(source, flags, rule_id, "pattern")
+    elif kind == "sequence":
+        source = _require_text(raw, "line_pattern", rule_id)
+        flags = _compile_flags(raw, rule_id, SEQUENCE_FLAGS)
+        pattern = _compile_pattern(source, flags, rule_id, "line_pattern")
+        raw_min = raw.get("min_consecutive")
+        if isinstance(raw_min, bool) or not isinstance(raw_min, int) or raw_min < 2:
+            raise RegistryError(f"{rule_id}: min_consecutive must be an integer >= 2")
+        min_consecutive = raw_min
     else:
         raw_filenames = raw.get("filenames")
         if not isinstance(raw_filenames, list) or not raw_filenames:
@@ -140,6 +211,9 @@ def _compile_rule(raw: object, index: int) -> Rule:
         if not all(isinstance(name, str) and name for name in raw_filenames):
             raise RegistryError(f"{rule_id}: filenames must contain non-empty strings")
         filenames = tuple(raw_filenames)
+        for key in ("unless_preceded_by", "unless_followed_by"):
+            if key in raw:
+                raise RegistryError(f"{rule_id}: {key} is not allowed for filename rules")
 
     return Rule(
         rule_id=rule_id,
@@ -152,6 +226,13 @@ def _compile_rule(raw: object, index: int) -> Rule:
         fix=fix,
         pattern=pattern,
         filenames=filenames,
+        min_consecutive=min_consecutive,
+        preceded_exclusion=_compile_exclusion(
+            raw, "unless_preceded_by", rule_id, _PRECEDED_TEMPLATE
+        ),
+        followed_exclusion=_compile_exclusion(
+            raw, "unless_followed_by", rule_id, _FOLLOWED_TEMPLATE
+        ),
     )
 
 
@@ -256,6 +337,15 @@ def is_mention(line: str, start: int, end: int) -> bool:
     return any(start >= span_start and end <= span_end for span_start, span_end in quoted_spans(line))
 
 
+def excluded_by_context(rule: Rule, line: str, start: int, end: int) -> bool:
+    """Return True when a same-line exclusion declared by the rule applies."""
+    if rule.preceded_exclusion is not None and rule.preceded_exclusion.search(line[:start]):
+        return True
+    if rule.followed_exclusion is not None and rule.followed_exclusion.match(line[end:]):
+        return True
+    return False
+
+
 def _line_starts(text: str) -> list[int]:
     return [0] + [match.end() for match in re.finditer("\n", text)]
 
@@ -267,6 +357,88 @@ def _line_details(text: str, starts: Sequence[int], offset: int) -> tuple[int, i
     if line_end == -1:
         line_end = len(text)
     return line_index + 1, line_start, text[line_start:line_end].rstrip("\r")
+
+
+def _excerpt(line: str) -> str:
+    return " ".join(line.strip().split())[:180]
+
+
+def _regex_findings(
+    rule: Rule,
+    text: str,
+    searchable: str,
+    starts: Sequence[int],
+    path: str,
+    seen: set[tuple[str, int]],
+) -> list[Finding]:
+    assert rule.pattern is not None
+    findings: list[Finding] = []
+    for match in rule.pattern.finditer(searchable):
+        matched = match.group(0)
+        if not matched.strip():
+            continue
+        # Anchor on the first non-blank character so a pattern that swallows
+        # leading blank lines is still attributed to the line with content.
+        anchor = match.start() + (len(matched) - len(matched.lstrip()))
+        line_number, line_start, line = _line_details(text, starts, anchor)
+        local_start = anchor - line_start
+        local_end = min(len(line), max(local_start, match.end() - line_start))
+        if is_mention(line, local_start, local_end):
+            continue
+        if excluded_by_context(rule, line, local_start, local_end):
+            continue
+        key = (rule.rule_id, line_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(_finding(rule, path, line_number, _excerpt(line)))
+    return findings
+
+
+def _sequence_findings(
+    rule: Rule,
+    text: str,
+    searchable: str,
+    starts: Sequence[int],
+    path: str,
+    seen: set[tuple[str, int]],
+) -> list[Finding]:
+    """Report one finding per run of at least ``min_consecutive`` matching lines."""
+    assert rule.pattern is not None
+    findings: list[Finding] = []
+    original_lines = text.split("\n")
+    run_start: int | None = None
+    run_length = 0
+
+    def flush() -> None:
+        nonlocal run_start, run_length
+        if run_start is not None and run_length >= rule.min_consecutive:
+            line_number = run_start + 1
+            key = (rule.rule_id, line_number)
+            if key not in seen:
+                seen.add(key)
+                line = original_lines[run_start].rstrip("\r")
+                findings.append(_finding(rule, path, line_number, _excerpt(line)))
+        run_start = None
+        run_length = 0
+
+    for index, masked in enumerate(searchable.split("\n")):
+        line = masked.rstrip("\r")
+        match = rule.pattern.search(line)
+        original = original_lines[index].rstrip("\r")
+        if (
+            match is not None
+            and match.group(0).strip()
+            and not is_mention(original, match.start(), match.end())
+            and not excluded_by_context(rule, original, match.start(), match.end())
+        ):
+            if run_start is None:
+                run_start = index
+            run_length += 1
+        else:
+            flush()
+    flush()
+    return findings
 
 
 def scan_text(
@@ -287,22 +459,12 @@ def scan_text(
     seen: set[tuple[str, int]] = set()
 
     for rule in active_rules:
-        if rule.kind != "regex" or scope not in rule.scopes or rule.pattern is None:
+        if scope not in rule.scopes or rule.pattern is None:
             continue
-        for match in rule.pattern.finditer(searchable):
-            if not match.group(0).strip():
-                continue
-            line_number, line_start, line = _line_details(text, starts, match.start())
-            local_start = match.start() - line_start
-            local_end = min(len(line), max(local_start, match.end() - line_start))
-            if is_mention(line, local_start, local_end):
-                continue
-            key = (rule.rule_id, line_number)
-            if key in seen:
-                continue
-            seen.add(key)
-            excerpt = " ".join(line.strip().split())[:180]
-            findings.append(_finding(rule, path, line_number, excerpt))
+        if rule.kind == "regex":
+            findings.extend(_regex_findings(rule, text, searchable, starts, path, seen))
+        elif rule.kind == "sequence":
+            findings.extend(_sequence_findings(rule, text, searchable, starts, path, seen))
 
     return sort_findings(findings)
 

@@ -1,0 +1,471 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic cases for the executable registry. Each case runs filename rules on the path and text rules on the text; expect is the exact multiset of (rule_id, line, decision).",
+  "cases": [
+    {
+      "id": "D7-summary-file/positive",
+      "path": "docs/SUMMARY.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "# Index\n\n- [Intro](intro.md)\n",
+      "expect": [{"rule_id": "D7-summary-file", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D1-plan-file", "D7-changes-file"]
+    },
+    {
+      "id": "D1-plan-file/positive",
+      "path": "PLAN.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "1. Do the thing.\n",
+      "expect": [{"rule_id": "D1-plan-file", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D1-implementation-file"]
+    },
+    {
+      "id": "D1-implementation-file/positive",
+      "path": "IMPLEMENTATION.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "I changed the parser.\n",
+      "expect": [{"rule_id": "D1-implementation-file", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D1-notes-file"]
+    },
+    {
+      "id": "D1-notes-file/positive",
+      "path": "NOTES.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Remember to rotate the key.\n",
+      "expect": [{"rule_id": "D1-notes-file", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D7-summary-file"]
+    },
+    {
+      "id": "D7-changes-file/positive",
+      "path": "CHANGES.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "## 1.0\n",
+      "expect": [{"rule_id": "D7-changes-file", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D1-plan-file"]
+    },
+    {
+      "id": "filename/readme-negative",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "# tool\n\nInstall with pip.\n",
+      "expect": [],
+      "must_not_find": ["D7-summary-file", "D1-plan-file", "D1-implementation-file", "D1-notes-file", "D7-changes-file", "S1-template-heading"]
+    },
+    {
+      "id": "filename/changelog-negative",
+      "path": "CHANGELOG.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "## 1.0\n\nFirst release.\n",
+      "expect": [],
+      "must_not_find": ["D7-changes-file", "D7-summary-file"]
+    },
+    {
+      "id": "filename/response-scope-negative",
+      "path": "SUMMARY.md",
+      "scope": "response",
+      "markdown": true,
+      "text": "Done.\n",
+      "expect": [],
+      "must_not_find": ["D7-summary-file"]
+    },
+    {
+      "id": "D2-maturity-claim/positive",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "This tool is production-ready.\n",
+      "expect": [{"rule_id": "D2-maturity-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "D2-maturity-claim/negation-excluded",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "This is not production-ready.\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "D2-maturity-claim/contraction-negation-excluded",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "It isn't production-ready.\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "D2-maturity-claim/not-yet-excluded",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Not yet production-ready; two migrations remain.\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "D2-maturity-claim/browser-baseline-remains-a-finding",
+      "path": "docs/motion.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Scroll timelines are production-ready in Chromium 126.\n",
+      "expect": [{"rule_id": "D2-maturity-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "D2-polish-word/positive-dedupes-per-line",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "A robust and seamless tool.\n",
+      "expect": [{"rule_id": "D2-polish-word", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "D2-polish-word/quoted-mention-negative",
+      "path": "docs/style.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Avoid words like \"robust\" and `seamless` in docs.\n",
+      "expect": [],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "S2-verification-claim/positive",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "All tests passed.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S2-verification-claim/conditional-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "If tests pass, commit:\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/conditional-with-emphasis-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "When **tests pass**, merge.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/instruction-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Make sure tests pass before pushing.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/affirmed-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "I verified that tests pass.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S3-attention-bait/positive",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "This is a revolutionary approach.\n",
+      "expect": [{"rule_id": "S3-attention-bait", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "S3-attention-bait/magic-number-excluded",
+      "path": "x.py",
+      "scope": "repository",
+      "markdown": false,
+      "text": "x = 42  # magic number\n",
+      "expect": [],
+      "must_not_find": ["S3-attention-bait"]
+    },
+    {
+      "id": "S3-attention-bait/multiplier-excluded",
+      "path": "scoring.py",
+      "scope": "repository",
+      "markdown": false,
+      "text": "# Blocking issues get a 10x multiplier for display.\n",
+      "expect": [],
+      "must_not_find": ["S3-attention-bait"]
+    },
+    {
+      "id": "S3-attention-bait/10x-faster-remains-a-finding",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Now 10x faster.\n",
+      "expect": [{"rule_id": "S3-attention-bait", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "S1-template-heading/positive",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "# Tool\n\n## Overview\n\nText.\n",
+      "expect": [{"rule_id": "S1-template-heading", "line": 3, "decision": "TRIM"}],
+      "must_not_find": ["S1-label-colon-bullet"]
+    },
+    {
+      "id": "S1-template-heading/crlf",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "# Tool\r\n\r\n## Overview\r\n\r\nText.\r\n",
+      "expect": [{"rule_id": "S1-template-heading", "line": 3, "decision": "TRIM"}],
+      "must_not_find": ["S1-label-colon-bullet"]
+    },
+    {
+      "id": "S1-template-heading/specific-heading-negative",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "## Scanner exit codes\n\n## Overview of the sync targets\n",
+      "expect": [],
+      "must_not_find": ["S1-template-heading"]
+    },
+    {
+      "id": "S1-label-colon-bullet/three-run-after-blank",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Intro\n\n- **Theme:** one\n- **Voice:** two\n- **Tone:** three\n",
+      "expect": [{"rule_id": "S1-label-colon-bullet", "line": 3, "decision": "TRIM"}],
+      "must_not_find": ["S1-template-heading"]
+    },
+    {
+      "id": "S1-label-colon-bullet/two-bullets-negative",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Intro\n\n- **Theme:** one\n- **Voice:** two\n",
+      "expect": [],
+      "must_not_find": ["S1-label-colon-bullet"]
+    },
+    {
+      "id": "S1-label-colon-bullet/single-letter-labels-negative",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "- **A:** 1\n- **B:** 2\n- **C:** 3\n",
+      "expect": [],
+      "must_not_find": ["S1-label-colon-bullet"]
+    },
+    {
+      "id": "S1-label-colon-bullet/split-by-plain-bullet-negative",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "- **Alpha:** 1\n- **Beta:** 2\n- plain\n- **Gamma:** 3\n- **Delta:** 4\n",
+      "expect": [],
+      "must_not_find": ["S1-label-colon-bullet"]
+    },
+    {
+      "id": "S1-label-colon-bullet/two-runs",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "- **Alpha:** 1\n- **Beta:** 2\n- **Gamma:** 3\n\n- **Delta:** 4\n- **Epsilon:** 5\n- **Zeta:** 6\n",
+      "expect": [
+        {"rule_id": "S1-label-colon-bullet", "line": 1, "decision": "TRIM"},
+        {"rule_id": "S1-label-colon-bullet", "line": 5, "decision": "TRIM"}
+      ],
+      "must_not_find": ["S1-template-heading"]
+    },
+    {
+      "id": "S1-label-colon-bullet/inside-fence-negative",
+      "path": "docs/patterns.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Example:\n\n```markdown\n- **Alpha:** 1\n- **Beta:** 2\n- **Gamma:** 3\n```\n",
+      "expect": [],
+      "must_not_find": ["S1-label-colon-bullet"]
+    },
+    {
+      "id": "S1-label-colon-bullet/indented-and-star-bullets",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "  * **Alpha:** 1\n  * **Beta:** 2\n  * **Gamma:** 3\n",
+      "expect": [{"rule_id": "S1-label-colon-bullet", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["S1-template-heading"]
+    },
+    {
+      "id": "S1-label-colon-bullet/response-scope",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "- **Alpha:** 1\n- **Beta:** 2\n- **Gamma:** 3\n",
+      "expect": [{"rule_id": "S1-label-colon-bullet", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["C4-trailing-summary"]
+    },
+    {
+      "id": "D5-generated-media-provenance/positive",
+      "path": "docs/hero.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "The hero uses a generated image.\n",
+      "expect": [{"rule_id": "D5-generated-media-provenance", "line": 1, "decision": "FLAG"}],
+      "must_not_find": ["S3-attention-bait"]
+    },
+    {
+      "id": "D5-generated-media-provenance/negative",
+      "path": "docs/hero.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Screenshot taken on 2026-05-01 at 390px width.\n",
+      "expect": [],
+      "must_not_find": ["D5-generated-media-provenance"]
+    },
+    {
+      "id": "C3-sycophantic-opener/positive",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "Great question! Here it is.\n",
+      "expect": [{"rule_id": "C3-sycophantic-opener", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["C2-tool-narration"]
+    },
+    {
+      "id": "C3-sycophantic-opener/leading-blank-lines",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "\n\nGreat question! Here it is.\n",
+      "expect": [{"rule_id": "C3-sycophantic-opener", "line": 3, "decision": "TRIM"}],
+      "must_not_find": ["C2-tool-narration"]
+    },
+    {
+      "id": "C3-sycophantic-opener/crlf-leading-blank-line",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "\r\n  You're absolutely right.\r\n",
+      "expect": [{"rule_id": "C3-sycophantic-opener", "line": 2, "decision": "TRIM"}],
+      "must_not_find": ["C2-tool-narration"]
+    },
+    {
+      "id": "C3-sycophantic-opener/not-at-start-negative",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "The answer is 4.\nGreat question though.\n",
+      "expect": [],
+      "must_not_find": ["C3-sycophantic-opener"]
+    },
+    {
+      "id": "C2-tool-narration/positive",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "I'll now open the file.\n",
+      "expect": [{"rule_id": "C2-tool-narration", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["C3-sycophantic-opener"]
+    },
+    {
+      "id": "C2-tool-narration/negative",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "I opened the file and found the bug on line 12.\n",
+      "expect": [],
+      "must_not_find": ["C2-tool-narration"]
+    },
+    {
+      "id": "C4-trailing-summary/positive",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "Done.\n\n## Summary\n\nAll good.\n",
+      "expect": [{"rule_id": "C4-trailing-summary", "line": 3, "decision": "TRIM"}],
+      "must_not_find": ["S1-template-heading"]
+    },
+    {
+      "id": "C4-trailing-summary/crlf",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "Done.\r\n\r\n## Summary\r\n",
+      "expect": [{"rule_id": "C4-trailing-summary", "line": 3, "decision": "TRIM"}],
+      "must_not_find": ["S1-template-heading"]
+    },
+    {
+      "id": "C4-trailing-summary/specific-heading-negative",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "## Summary of failing checks\n\n- lint\n",
+      "expect": [],
+      "must_not_find": ["C4-trailing-summary"]
+    },
+    {
+      "id": "C5-follow-up-bundle/positive",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "Let me know if you want me to also add tests.\n",
+      "expect": [{"rule_id": "C5-follow-up-bundle", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["C2-tool-narration"]
+    },
+    {
+      "id": "C5-follow-up-bundle/negative",
+      "path": "assistant-response",
+      "scope": "response",
+      "markdown": true,
+      "text": "Let me know if the build still fails.\n",
+      "expect": [],
+      "must_not_find": ["C5-follow-up-bundle"]
+    },
+    {
+      "id": "response-rules/repository-scope-negative",
+      "path": "docs/notes-on-agents.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "I'll now open it. Great question. Let me know if you want me to also add docs.\n\n## Summary\n",
+      "expect": [],
+      "must_not_find": ["C2-tool-narration", "C3-sycophantic-opener", "C4-trailing-summary", "C5-follow-up-bundle"]
+    },
+    {
+      "id": "multiple-rules/one-line",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Production-ready; all tests passed.\n",
+      "expect": [
+        {"rule_id": "D2-maturity-claim", "line": 1, "decision": "BLOCK"},
+        {"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}
+      ],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "fences/unclosed-fence-masks-remainder",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "```text\nProduction-ready. All tests passed.\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim", "S2-verification-claim"]
+    }
+  ]
+}

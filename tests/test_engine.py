@@ -19,12 +19,41 @@ from lib.anti_slop_engine import (  # noqa: E402
 )
 
 
+BASE_RULE = {
+    "id": "T1-test",
+    "code": "T1",
+    "impact": "minor",
+    "decision": "FLAG",
+    "scopes": ["repository"],
+    "kind": "regex",
+    "pattern": "\\bslop\\b",
+    "message": "test rule",
+    "fix": "remove it",
+}
+
+
+def write_registry(directory, *rules):
+    path = Path(directory, "rules.json")
+    path.write_text(json.dumps({"schema_version": 1, "rules": list(rules)}), encoding="utf-8")
+    return path
+
+
+def rule(**overrides):
+    merged = dict(BASE_RULE)
+    merged.update(overrides)
+    for key, value in list(merged.items()):
+        if value is None:
+            del merged[key]
+    return merged
+
+
 class RegistryTests(unittest.TestCase):
     def test_registry_is_valid_and_ids_are_unique(self):
         rules = load_rules()
         self.assertGreaterEqual(len(rules), 15)
         self.assertEqual(len({rule.rule_id for rule in rules}), len(rules))
         self.assertEqual({rule.decision for rule in rules}, {"BLOCK", "TRIM", "FLAG"})
+        self.assertEqual({rule.kind for rule in rules}, {"filename", "regex", "sequence"})
 
     def test_invalid_registry_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -32,6 +61,44 @@ class RegistryTests(unittest.TestCase):
             path.write_text(json.dumps({"schema_version": 1, "rules": []}), encoding="utf-8")
             with self.assertRaises(RegistryError):
                 load_rules(path)
+
+    def test_unknown_key_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_registry(tmp, rule(unless_preceeded_by=["not"]))
+            with self.assertRaisesRegex(RegistryError, "unknown keys"):
+                load_rules(path)
+
+    def test_sequence_rule_validation(self):
+        base = rule(kind="sequence", pattern=None, line_pattern="^- ", min_consecutive=3)
+        invalid = {
+            "multiline flag": rule(**dict(base, flags=["MULTILINE"])),
+            "min_consecutive below two": rule(**dict(base, min_consecutive=1)),
+            "boolean min_consecutive": rule(**dict(base, min_consecutive=True)),
+            "missing min_consecutive": rule(**dict(base, min_consecutive=None)),
+            "missing line_pattern": rule(**dict(base, line_pattern=None)),
+        }
+        for label, raw in invalid.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(RegistryError):
+                    load_rules(write_registry(tmp, raw))
+        with tempfile.TemporaryDirectory() as tmp:
+            rules = load_rules(write_registry(tmp, base))
+        self.assertEqual(rules[0].kind, "sequence")
+        self.assertEqual(rules[0].min_consecutive, 3)
+
+    def test_exclusion_validation(self):
+        invalid = {
+            "filename rule": rule(
+                kind="filename", pattern=None, filenames=["X.md"], unless_preceded_by=["not"]
+            ),
+            "empty list": rule(unless_preceded_by=[]),
+            "non-string item": rule(unless_followed_by=[1]),
+            "bad regex": rule(unless_followed_by=["("]),
+        }
+        for label, raw in invalid.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(RegistryError):
+                    load_rules(write_registry(tmp, raw))
 
 
 class DetectionTests(unittest.TestCase):
@@ -41,6 +108,14 @@ class DetectionTests(unittest.TestCase):
             path="README.md",
             scope="repository",
             markdown=markdown,
+        )
+
+    def scan_response(self, text):
+        return scan_text(
+            text,
+            path="<assistant-response>",
+            scope="response",
+            markdown=True,
         )
 
     def test_reports_multiple_rules_on_one_line(self):
@@ -71,15 +146,47 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_response_scope_uses_response_and_shared_rules(self):
-        findings = scan_text(
-            "Great question! This is robust.\n",
-            path="<assistant-response>",
-            scope="response",
-            markdown=True,
-        )
+        findings = self.scan_response("Great question! This is robust.\n")
         by_id = {finding.rule_id: finding for finding in findings}
         self.assertEqual(by_id["C3-sycophantic-opener"].severity, "TRIM")
         self.assertEqual(by_id["D2-polish-word"].severity, "TRIM")
+
+    def test_leading_blank_lines_attribute_to_the_content_line(self):
+        findings = self.scan_response("\n\nGreat question! Here it is.\n")
+        c3 = [finding for finding in findings if finding.rule_id == "C3-sycophantic-opener"]
+        self.assertEqual([(finding.line, finding.excerpt) for finding in c3], [
+            (3, "Great question! Here it is."),
+        ])
+
+    def test_crlf_heading_attributes_to_the_heading_line(self):
+        findings = self.scan_repo("# Tool\r\n\r\n## Overview\r\n\r\nText.\r\n")
+        self.assertEqual(
+            [(finding.rule_id, finding.line, finding.excerpt) for finding in findings],
+            [("S1-template-heading", 3, "## Overview")],
+        )
+
+    def test_label_colon_bullets_need_three_consecutive_lines(self):
+        two = self.scan_repo("Intro\n\n- **Theme:** one\n- **Voice:** two\n")
+        self.assertEqual(two, [])
+        three = self.scan_repo("Intro\n\n- **Theme:** one\n- **Voice:** two\n- **Tone:** three\n")
+        self.assertEqual(
+            [(finding.rule_id, finding.line, finding.excerpt) for finding in three],
+            [("S1-label-colon-bullet", 3, "- **Theme:** one")],
+        )
+
+    def test_conditional_and_negated_claims_are_excluded(self):
+        for text in (
+            "If tests pass, commit:\n",
+            "When **tests pass**, merge.\n",
+            "This is not production-ready.\n",
+            "x = 42  # magic number\n",
+            "Weights get a 10x multiplier.\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.scan_repo(text, markdown=False), [])
+        for text in ("I verified that tests pass.\n", "Now 10x faster.\n", "This is magic!\n"):
+            with self.subTest(text=text):
+                self.assertEqual(len(self.scan_repo(text, markdown=False)), 1)
 
     def test_filename_rule_has_layered_severity(self):
         finding = filename_findings("IMPLEMENTATION.md", path="IMPLEMENTATION.md")[0]

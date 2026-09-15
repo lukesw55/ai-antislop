@@ -66,18 +66,25 @@ class SkillContractTests(unittest.TestCase):
         self.assertTrue(any("repository" in rule.scopes for rule in rules))
         self.assertTrue(any("response" in rule.scopes for rule in rules))
 
-    def test_eval_files_have_stable_case_ids(self):
-        eval_dir = SKILL_DIR / "evals"
-        cases = json.loads((eval_dir / "evals.json").read_text(encoding="utf-8"))
-        self.assertIsInstance(cases, list)
-        self.assertTrue(cases)
+    def assert_unique_case_ids(self, cases, label):
+        self.assertIsInstance(cases, list, f"{label} must be a list")
+        self.assertTrue(cases, f"{label} must not be empty")
         seen = set()
         for case in cases:
             case_id = case.get("id") or case.get("name")
-            self.assertIsInstance(case_id, str, "eval case without id/name")
-            self.assertTrue(case_id.strip(), "empty eval case id/name")
-            self.assertNotIn(case_id, seen, f"duplicate eval case id: {case_id}")
+            self.assertIsInstance(case_id, str, f"{label}: eval case without id/name")
+            self.assertTrue(case_id.strip(), f"{label}: empty eval case id/name")
+            self.assertNotIn(case_id, seen, f"{label}: duplicate eval case id: {case_id}")
             seen.add(case_id)
+
+    def test_eval_files_have_stable_case_ids(self):
+        eval_dir = SKILL_DIR / "evals"
+        semantic = json.loads((eval_dir / "evals.json").read_text(encoding="utf-8"))
+        self.assert_unique_case_ids(semantic, "evals.json")
+
+        corpus = json.loads((eval_dir / "rule-corpus.json").read_text(encoding="utf-8"))
+        self.assertIsInstance(corpus, dict)
+        self.assert_unique_case_ids(corpus.get("cases"), "rule-corpus.json")
 
         triggers = json.loads(
             (eval_dir / "trigger-queries.json").read_text(encoding="utf-8")
