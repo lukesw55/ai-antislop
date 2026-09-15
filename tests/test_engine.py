@@ -97,11 +97,28 @@ class RegistryTests(unittest.TestCase):
             "empty list": rule(unless_preceded_by=[]),
             "non-string item": rule(unless_followed_by=[1]),
             "bad regex": rule(unless_followed_by=["("]),
+            "empty object": rule(unless_followed_by={}),
+            "object with empty key": rule(unless_followed_by={"": ["x"]}),
+            "object with non-list value": rule(unless_followed_by={"magic": "numbers"}),
+            "object with bad key regex": rule(unless_followed_by={"(": ["x"]}),
         }
         for label, raw in invalid.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaises(RegistryError):
                     load_rules(write_registry(tmp, raw))
+
+    def test_object_form_exclusion_targets_one_alternative(self):
+        custom = rule(pattern="\\b(alpha|beta)\\b", unless_followed_by={"alpha": ["one"]})
+        with tempfile.TemporaryDirectory() as tmp:
+            rules = load_rules(write_registry(tmp, custom))
+        findings = scan_text(
+            "alpha one\nbeta one\nalpha two\n",
+            path="x.md",
+            scope="repository",
+            markdown=False,
+            rules=rules,
+        )
+        self.assertEqual([finding.line for finding in findings], [2, 3])
 
 
 class DetectionTests(unittest.TestCase):
@@ -181,13 +198,22 @@ class DetectionTests(unittest.TestCase):
         for text in (
             "If tests pass, commit:\n",
             "When **tests pass**, merge.\n",
+            "If all tests pass, commit.\n",
+            "When the build passes, deploy.\n",
+            "Ensure all tests pass before pushing.\n",
             "This is not production-ready.\n",
             "x = 42  # magic number\n",
             "Weights get a 10x multiplier.\n",
         ):
             with self.subTest(text=text):
                 self.assertEqual(self.scan_repo(text, markdown=False), [])
-        for text in ("I verified that tests pass.\n", "Now 10x faster.\n", "This is magic!\n"):
+        for text in (
+            "I verified that tests pass.\n",
+            "The build passes on main.\n",
+            "Now 10x faster.\n",
+            "This is magic!\n",
+            "Our launch delivered shocking numbers.\n",
+        ):
             with self.subTest(text=text):
                 self.assertEqual(len(self.scan_repo(text, markdown=False)), 1)
 
