@@ -68,8 +68,11 @@ class Rule:
     pattern: re.Pattern[str] | None = None
     filenames: tuple[str, ...] = ()
     min_consecutive: int = 0
-    preceded_exclusion: re.Pattern[str] | None = None
-    followed_exclusion: re.Pattern[str] | None = None
+    # Each entry pairs an optional selector, matched against the whole matched
+    # text, with the compiled exclusion. A None selector applies to every
+    # alternative of the rule's pattern.
+    preceded_exclusions: tuple[tuple[re.Pattern[str] | None, re.Pattern[str]], ...] = ()
+    followed_exclusions: tuple[tuple[re.Pattern[str] | None, re.Pattern[str]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -141,20 +144,50 @@ def _compile_pattern(source: str, flags: int, rule_id: str, key: str) -> re.Patt
         raise RegistryError(f"{rule_id}: invalid {key} regex: {exc}") from exc
 
 
-def _compile_exclusion(
-    raw: dict[str, object], key: str, rule_id: str, template: str
-) -> re.Pattern[str] | None:
-    if key not in raw:
-        return None
-    items = raw[key]
+def _compile_exclusion_list(
+    items: object, key: str, rule_id: str, template: str
+) -> re.Pattern[str]:
     if (
         not isinstance(items, list)
         or not items
         or not all(isinstance(item, str) and item.strip() for item in items)
     ):
-        raise RegistryError(f"{rule_id}: {key} must be a non-empty list of strings")
+        raise RegistryError(
+            f"{rule_id}: {key} must be a non-empty list of strings, "
+            "or an object mapping matched text to such lists"
+        )
     alternatives = "|".join(f"(?:{item})" for item in items)
     return _compile_pattern(template % alternatives, re.IGNORECASE, rule_id, key)
+
+
+def _compile_exclusion(
+    raw: dict[str, object], key: str, rule_id: str, template: str
+) -> tuple[tuple[re.Pattern[str] | None, re.Pattern[str]], ...]:
+    """Compile an ``unless_*`` field.
+
+    A list applies to every alternative of the rule's pattern. An object maps
+    a regex, which must match the whole matched text, to the list that applies
+    to that alternative only.
+    """
+    if key not in raw:
+        return ()
+    items = raw[key]
+    if isinstance(items, list):
+        return ((None, _compile_exclusion_list(items, key, rule_id, template)),)
+    if isinstance(items, dict) and items:
+        compiled: list[tuple[re.Pattern[str] | None, re.Pattern[str]]] = []
+        for selector_source, selected_items in items.items():
+            if not isinstance(selector_source, str) or not selector_source.strip():
+                raise RegistryError(f"{rule_id}: {key} keys must be non-empty regex strings")
+            selector = _compile_pattern(selector_source, re.IGNORECASE, rule_id, key)
+            compiled.append(
+                (selector, _compile_exclusion_list(selected_items, key, rule_id, template))
+            )
+        return tuple(compiled)
+    raise RegistryError(
+        f"{rule_id}: {key} must be a non-empty list of strings, "
+        "or an object mapping matched text to such lists"
+    )
 
 
 def _compile_rule(raw: object, index: int) -> Rule:
@@ -227,10 +260,10 @@ def _compile_rule(raw: object, index: int) -> Rule:
         pattern=pattern,
         filenames=filenames,
         min_consecutive=min_consecutive,
-        preceded_exclusion=_compile_exclusion(
+        preceded_exclusions=_compile_exclusion(
             raw, "unless_preceded_by", rule_id, _PRECEDED_TEMPLATE
         ),
-        followed_exclusion=_compile_exclusion(
+        followed_exclusions=_compile_exclusion(
             raw, "unless_followed_by", rule_id, _FOLLOWED_TEMPLATE
         ),
     )
@@ -338,11 +371,18 @@ def is_mention(line: str, start: int, end: int) -> bool:
 
 
 def excluded_by_context(rule: Rule, line: str, start: int, end: int) -> bool:
-    """Return True when a same-line exclusion declared by the rule applies."""
-    if rule.preceded_exclusion is not None and rule.preceded_exclusion.search(line[:start]):
-        return True
-    if rule.followed_exclusion is not None and rule.followed_exclusion.match(line[end:]):
-        return True
+    """Return True when a same-line exclusion declared by the rule applies to this match."""
+    matched = line[start:end]
+    for selector, exclusion in rule.preceded_exclusions:
+        if selector is not None and selector.fullmatch(matched) is None:
+            continue
+        if exclusion.search(line[:start]):
+            return True
+    for selector, exclusion in rule.followed_exclusions:
+        if selector is not None and selector.fullmatch(matched) is None:
+            continue
+        if exclusion.match(line[end:]):
+            return True
     return False
 
 
