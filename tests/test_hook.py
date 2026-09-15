@@ -10,6 +10,18 @@ from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "anti-slop" / "hooks" / "anti-slop-stop.py"
 
+ZEBRA_RULE = {
+    "id": "T1-zebra",
+    "code": "T1",
+    "impact": "major",
+    "decision": "TRIM",
+    "scopes": ["response"],
+    "kind": "regex",
+    "pattern": "\\bzebra\\b",
+    "message": "zebra spotted",
+    "fix": "remove the zebra",
+}
+
 
 def make_transcript(directory, messages):
     """Write a minimal Claude Code transcript JSONL with the given assistant texts."""
@@ -26,6 +38,9 @@ def make_transcript(directory, messages):
 
 def run_hook(payload, env_extra=None):
     env = dict(os.environ)
+    env.pop("ANTI_SLOP_HOOK_MODE", None)
+    env.pop("ANTI_SLOP_HOOK_BLOCK", None)
+    env.pop("ANTI_SLOP_RULES", None)
     if env_extra:
         env.update(env_extra)
     proc = subprocess.run(
@@ -39,6 +54,10 @@ def run_hook(payload, env_extra=None):
     return proc
 
 
+def stop_payload(message):
+    return {"hook_event_name": "Stop", "last_assistant_message": message}
+
+
 class HookTests(unittest.TestCase):
     def test_detects_slop_from_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -48,7 +67,7 @@ class HookTests(unittest.TestCase):
             proc = run_hook({"hook_event_name": "Stop", "transcript_path": transcript})
         self.assertEqual(proc.returncode, 0)
         out = json.loads(proc.stdout)
-        context = out["hookSpecificOutput"]["additionalContext"]
+        context = out["systemMessage"]
         self.assertIn("C3", context)
         self.assertIn("S2", context)
 
@@ -61,13 +80,10 @@ class HookTests(unittest.TestCase):
             "Let me know if you want me to also add more.",
             "# Summary",
         ))
-        proc = run_hook({
-            "hook_event_name": "Stop",
-            "last_assistant_message": message,
-        })
+        proc = run_hook(stop_payload(message))
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        context = json.loads(proc.stdout)["systemMessage"]
         finding_lines = re.findall(r"(?m)^- [A-Z][0-9]/", context)
         self.assertEqual(len(finding_lines), 5, context)
         self.assertRegex(context, r"(?m)^- [1-9][0-9]* additional findings? omitted\.$")
@@ -95,7 +111,7 @@ class HookTests(unittest.TestCase):
             proc = run_hook({"hook_event_name": "Stop", "transcript_path": str(transcript)})
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        context = json.loads(proc.stdout)["systemMessage"]
         self.assertIn("S2", context)
         self.assertNotIn("C3", context)
         self.assertNotIn("D2", context)
@@ -136,6 +152,26 @@ class HookTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout.strip(), "")
 
+    def test_warn_mode_is_default_and_addresses_the_user(self):
+        proc = run_hook(stop_payload("Great question! All tests passed."))
+        out = json.loads(proc.stdout)
+        self.assertEqual(set(out), {"systemMessage"})
+        self.assertIn("C3", out["systemMessage"])
+        self.assertNotIn("Revise before stopping", out["systemMessage"])
+        self.assertNotIn("Preserve evidence", out["systemMessage"])
+
+    def test_context_mode_shape(self):
+        proc = run_hook(
+            stop_payload("Great question! Happy to help."),
+            env_extra={"ANTI_SLOP_HOOK_MODE": "context"},
+        )
+        out = json.loads(proc.stdout)
+        self.assertEqual(set(out), {"hookSpecificOutput"})
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "Stop")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("C3", context)
+        self.assertIn("Revise before stopping", context)
+
     def test_block_mode_shape(self):
         with tempfile.TemporaryDirectory() as tmp:
             transcript = make_transcript(tmp, ["Great question! Happy to help."])
@@ -146,6 +182,56 @@ class HookTests(unittest.TestCase):
         out = json.loads(proc.stdout)
         self.assertEqual(out["decision"], "block")
         self.assertIn("C3", out["reason"])
+        self.assertIn("Revise before stopping", out["reason"])
+
+    def test_mode_env_takes_precedence_over_block_alias(self):
+        proc = run_hook(
+            stop_payload("Great question!"),
+            env_extra={"ANTI_SLOP_HOOK_MODE": "warn", "ANTI_SLOP_HOOK_BLOCK": "1"},
+        )
+        self.assertEqual(set(json.loads(proc.stdout)), {"systemMessage"})
+
+    def test_invalid_mode_is_ignored(self):
+        with_alias = run_hook(
+            stop_payload("Great question!"),
+            env_extra={"ANTI_SLOP_HOOK_MODE": "loud", "ANTI_SLOP_HOOK_BLOCK": "1"},
+        )
+        self.assertEqual(json.loads(with_alias.stdout)["decision"], "block")
+        without_alias = run_hook(
+            stop_payload("Great question!"),
+            env_extra={"ANTI_SLOP_HOOK_MODE": "loud"},
+        )
+        self.assertEqual(set(json.loads(without_alias.stdout)), {"systemMessage"})
+
+    def test_custom_registry_replaces_the_bundled_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp, "rules.json")
+            registry.write_text(
+                json.dumps({"schema_version": 1, "rules": [ZEBRA_RULE]}), encoding="utf-8"
+            )
+            env = {"ANTI_SLOP_RULES": str(registry)}
+            zebra = run_hook(stop_payload("The zebra crossed the road."), env_extra=env)
+            bundled_only = run_hook(stop_payload("Great question!"), env_extra=env)
+            default = run_hook(stop_payload("The zebra crossed the road."))
+        self.assertIn("T1", json.loads(zebra.stdout)["systemMessage"])
+        self.assertEqual(bundled_only.stdout.strip(), "")
+        self.assertEqual(default.stdout.strip(), "")
+
+    def test_invalid_custom_registry_fails_open(self):
+        proc = run_hook(
+            stop_payload("Great question!"),
+            env_extra={"ANTI_SLOP_RULES": "/nonexistent/rules.json"},
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")
+
+    def test_directives_in_the_response_are_ignored(self):
+        message = (
+            "<!-- anti-slop-ignore-next-line S2-verification-claim -- self-dismissal -->\n"
+            "All tests passed.\n"
+        )
+        proc = run_hook(stop_payload(message))
+        self.assertIn("S2", json.loads(proc.stdout)["systemMessage"])
 
     def test_graceful_on_missing_transcript(self):
         proc = run_hook({"hook_event_name": "Stop", "transcript_path": "/nonexistent/t.jsonl"})
@@ -162,12 +248,9 @@ class HookTests(unittest.TestCase):
             self.assertEqual(proc.stdout.strip(), "")
 
     def test_payload_message_fast_path(self):
-        proc = run_hook({
-            "hook_event_name": "Stop",
-            "last_assistant_message": "You're absolutely right about that.",
-        })
+        proc = run_hook(stop_payload("You're absolutely right about that."))
         out = json.loads(proc.stdout)
-        self.assertIn("C3", out["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("C3", out["systemMessage"])
 
 
 if __name__ == "__main__":

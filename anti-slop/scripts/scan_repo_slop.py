@@ -20,10 +20,12 @@ from lib.anti_slop_engine import (  # noqa: E402
     Finding,
     RegistryError,
     Rule,
+    apply_suppressions,
     count_decisions,
     fails_at,
     filename_findings,
     load_rules,
+    parse_directives,
     scan_text,
     sort_findings,
 )
@@ -50,6 +52,17 @@ class ScanStats:
     files_scanned: int = 0
     files_skipped_too_large: int = 0
     files_unreadable: int = 0
+    suppressed_findings: int = 0
+
+
+@dataclass
+class FileScan:
+    """Result of scanning one file. ``problems`` holds (line, reason) for bad directives."""
+
+    findings: list[Finding]
+    suppressed: int
+    problems: list[tuple[int, str]]
+    state: str
 
 
 def nonnegative_int(value: str) -> int:
@@ -152,29 +165,39 @@ def scan_file(
     root: Path,
     rules: Sequence[Rule],
     max_file_bytes: int,
-) -> tuple[list[Finding], str]:
+) -> FileScan:
     rel = path.relative_to(root).as_posix()
     findings = filename_findings(path.name, path=rel, scope="repository", rules=rules)
     try:
         if path.stat().st_size > max_file_bytes:
-            return findings, "too_large"
+            return FileScan(findings, 0, [], "too_large")
         with path.open("rb") as handle:
             content = handle.read(max_file_bytes + 1)
     except OSError:
-        return findings, "unreadable"
+        return FileScan(findings, 0, [], "unreadable")
     if len(content) > max_file_bytes:
-        return findings, "too_large"
+        return FileScan(findings, 0, [], "too_large")
 
+    text = content.decode("utf-8", errors="replace")
+    markdown = path.suffix.lower() in MARKDOWN_EXTS
+    suppressions, problems = parse_directives(text, rules, markdown=markdown)
     findings.extend(
         scan_text(
-            content.decode("utf-8", errors="replace"),
+            text,
             path=rel,
             scope="repository",
-            markdown=path.suffix.lower() in MARKDOWN_EXTS,
+            markdown=markdown,
             rules=rules,
+            skip_lines={item.directive_line for item in suppressions},
         )
     )
-    return sort_findings(findings), "scanned"
+    active, suppressed = apply_suppressions(findings, suppressions)
+    return FileScan(
+        active,
+        len(suppressed),
+        [(problem.line, problem.reason) for problem in problems],
+        "scanned",
+    )
 
 
 def summary_payload(
@@ -189,6 +212,7 @@ def summary_payload(
         "files_unreadable": stats.files_unreadable,
         "total_findings": len(findings),
         "returned_findings": returned,
+        "suppressed_findings": stats.suppressed_findings,
         "by_decision": count_decisions(findings),
     }
 
@@ -204,7 +228,8 @@ def format_summary(summary: dict[str, object]) -> str:
         f"unreadable={summary['files_unreadable']}; "
         f"findings={summary['total_findings']} "
         f"(BLOCK={decisions['BLOCK']}, TRIM={decisions['TRIM']}, FLAG={decisions['FLAG']}), "
-        f"returned={summary['returned_findings']}"
+        f"returned={summary['returned_findings']}, "
+        f"suppressed={summary['suppressed_findings']}"
     )
 
 
@@ -214,10 +239,13 @@ def emit_notices(
     total_findings: int,
     returned_findings: int,
     max_file_bytes: int,
+    problems: Sequence[tuple[str, int, str]],
     quiet: bool,
 ) -> None:
     if quiet:
         return
+    for rel, line, reason in problems:
+        print(f"warning: {rel}:{line}: anti-slop directive ignored: {reason}", file=sys.stderr)
     omitted = total_findings - returned_findings
     if omitted:
         print(
@@ -273,6 +301,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=f"Also scan default-excluded paths: {', '.join(DEFAULT_EXCLUDES)}",
     )
+    parser.add_argument(
+        "--rules",
+        metavar="PATH",
+        help="Load this complete rule registry instead of the bundled rules.json",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.path).expanduser().resolve()
@@ -281,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        rules = load_rules()
+        rules = load_rules(Path(args.rules).expanduser()) if args.rules else load_rules()
     except RegistryError as exc:
         print(f"Invalid anti-slop rule registry: {exc}", file=sys.stderr)
         return 1
@@ -297,16 +330,19 @@ def main(argv: list[str] | None = None) -> int:
 
     stats = ScanStats()
     findings: list[Finding] = []
+    problems: list[tuple[str, int, str]] = []
     for path in files:
         rel = path.relative_to(scan_root).as_posix()
         if is_excluded(rel, excludes):
             continue
         stats.files_considered += 1
-        file_findings, state = scan_file(path, scan_root, rules, args.max_file_bytes)
-        findings.extend(file_findings)
-        if state == "scanned":
+        scan = scan_file(path, scan_root, rules, args.max_file_bytes)
+        findings.extend(scan.findings)
+        stats.suppressed_findings += scan.suppressed
+        problems.extend((rel, line, reason) for line, reason in scan.problems)
+        if scan.state == "scanned":
             stats.files_scanned += 1
-        elif state == "too_large":
+        elif scan.state == "too_large":
             stats.files_skipped_too_large += 1
         else:
             stats.files_unreadable += 1
@@ -350,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         total_findings=len(findings),
         returned_findings=len(returned),
         max_file_bytes=args.max_file_bytes,
+        problems=problems,
         quiet=args.quiet,
     )
 

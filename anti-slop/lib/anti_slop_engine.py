@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Collection, Iterable, Sequence
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +49,14 @@ KNOWN_KEYS = {
 _EXCLUSION_GAP = r"[\s*_`~]*"
 _PRECEDED_TEMPLATE = r"(?<![\w'])(?:%s)" + _EXCLUSION_GAP + r"\Z"
 _FOLLOWED_TEMPLATE = r"\A" + _EXCLUSION_GAP + r"(?:%s)(?![\w'])"
+
+# Inline suppression directives. The whole line must be the comment.
+FILE_DIRECTIVE_MAX_LINE = 10
+_DIRECTIVE_HEAD = re.compile(
+    r"^﻿?[ \t]*(?P<opener><!--|#|//)[ \t]*"
+    r"anti-slop-ignore-(?P<scope>next-line|file)(?![\w-])(?P<rest>.*)$"
+)
+_DIRECTIVE_BODY = re.compile(r"^[ \t]+(?P<rule>\S+)[ \t]+--[ \t]+(?P<reason>\S.*?)[ \t]*$")
 
 
 class RegistryError(ValueError):
@@ -107,6 +115,23 @@ class Finding:
             "fix": self.fix,
             "excerpt": self.excerpt,
         }
+
+
+@dataclass(frozen=True)
+class Suppression:
+    """A valid inline directive. ``target_line`` is None for file-wide scope."""
+
+    rule_id: str
+    scope: str
+    directive_line: int
+    target_line: int | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class DirectiveProblem:
+    line: int
+    reason: str
 
 
 def _require_text(raw: dict[str, object], key: str, rule_id: str) -> str:
@@ -370,6 +395,7 @@ def _regex_findings(
     starts: Sequence[int],
     path: str,
     seen: set[tuple[str, int]],
+    skipped: frozenset[int],
 ) -> list[Finding]:
     assert rule.pattern is not None
     findings: list[Finding] = []
@@ -387,6 +413,8 @@ def _regex_findings(
             continue
         if excluded_by_context(rule, line, local_start, local_end):
             continue
+        if line_number in skipped:
+            continue
         key = (rule.rule_id, line_number)
         if key in seen:
             continue
@@ -402,6 +430,7 @@ def _sequence_findings(
     starts: Sequence[int],
     path: str,
     seen: set[tuple[str, int]],
+    skipped: frozenset[int],
 ) -> list[Finding]:
     """Report one finding per run of at least ``min_consecutive`` matching lines."""
     assert rule.pattern is not None
@@ -415,7 +444,7 @@ def _sequence_findings(
         if run_start is not None and run_length >= rule.min_consecutive:
             line_number = run_start + 1
             key = (rule.rule_id, line_number)
-            if key not in seen:
+            if line_number not in skipped and key not in seen:
                 seen.add(key)
                 line = original_lines[run_start].rstrip("\r")
                 findings.append(_finding(rule, path, line_number, _excerpt(line)))
@@ -448,13 +477,16 @@ def scan_text(
     scope: str,
     markdown: bool,
     rules: Sequence[Rule] | None = None,
+    skip_lines: Collection[int] = (),
 ) -> list[Finding]:
+    """Run text rules for ``scope``. Lines in ``skip_lines`` never produce findings."""
     if scope not in VALID_SCOPES:
         raise ValueError(f"invalid scan scope: {scope}")
 
     active_rules = rules or load_rules()
     searchable = mask_markdown_fences(text) if markdown else text
     starts = _line_starts(text)
+    skipped = frozenset(skip_lines)
     findings: list[Finding] = []
     seen: set[tuple[str, int]] = set()
 
@@ -462,9 +494,13 @@ def scan_text(
         if scope not in rule.scopes or rule.pattern is None:
             continue
         if rule.kind == "regex":
-            findings.extend(_regex_findings(rule, text, searchable, starts, path, seen))
+            findings.extend(
+                _regex_findings(rule, text, searchable, starts, path, seen, skipped)
+            )
         elif rule.kind == "sequence":
-            findings.extend(_sequence_findings(rule, text, searchable, starts, path, seen))
+            findings.extend(
+                _sequence_findings(rule, text, searchable, starts, path, seen, skipped)
+            )
 
     return sort_findings(findings)
 
@@ -482,6 +518,101 @@ def filename_findings(
         for rule in active_rules
         if rule.kind == "filename" and scope in rule.scopes and filename in rule.filenames
     )
+
+
+def parse_directives(
+    text: str,
+    rules: Sequence[Rule],
+    *,
+    markdown: bool,
+) -> tuple[list[Suppression], list[DirectiveProblem]]:
+    """Parse whole-line ``anti-slop-ignore-*`` comments.
+
+    Accepted forms, each on a line of its own (leading whitespace allowed),
+    written as an HTML comment, a ``#`` comment, or a ``//`` comment:
+
+        `<!-- anti-slop-ignore-next-line RULE_ID -- reason -->`
+        `# anti-slop-ignore-file RULE_ID -- reason`
+        `// anti-slop-ignore-next-line RULE_ID -- reason`
+
+    Directives inside Markdown fences are not recognized when ``markdown`` is
+    true. Invalid directives are reported as problems and suppress nothing.
+    """
+    known = {rule.rule_id for rule in rules}
+    searchable = mask_markdown_fences(text) if markdown else text
+    line_count = len(text.splitlines())
+    suppressions: list[Suppression] = []
+    problems: list[DirectiveProblem] = []
+
+    for index, raw in enumerate(searchable.split("\n")):
+        line_number = index + 1
+        head = _DIRECTIVE_HEAD.match(raw.rstrip("\r"))
+        if head is None:
+            continue
+        rest = head.group("rest")
+        if head.group("opener") == "<!--":
+            stripped = rest.rstrip()
+            if not stripped.endswith("-->"):
+                problems.append(
+                    DirectiveProblem(
+                        line_number, "HTML comment directive must end with --> on the same line"
+                    )
+                )
+                continue
+            rest = stripped[:-3]
+        body = _DIRECTIVE_BODY.match(rest)
+        if body is None:
+            problems.append(
+                DirectiveProblem(
+                    line_number, "expected 'anti-slop-ignore-<scope> <RULE_ID> -- <reason>'"
+                )
+            )
+            continue
+        rule_id = body.group("rule")
+        if rule_id not in known:
+            problems.append(DirectiveProblem(line_number, f"unknown rule id {rule_id!r}"))
+            continue
+        reason = body.group("reason")
+        if head.group("scope") == "file":
+            if line_number > FILE_DIRECTIVE_MAX_LINE:
+                problems.append(
+                    DirectiveProblem(
+                        line_number,
+                        "anti-slop-ignore-file must appear within the first "
+                        f"{FILE_DIRECTIVE_MAX_LINE} lines",
+                    )
+                )
+                continue
+            suppressions.append(Suppression(rule_id, "file", line_number, None, reason))
+        else:
+            target = line_number + 1
+            if target > line_count:
+                problems.append(
+                    DirectiveProblem(line_number, "anti-slop-ignore-next-line has no following line")
+                )
+                continue
+            suppressions.append(Suppression(rule_id, "next-line", line_number, target, reason))
+
+    return suppressions, problems
+
+
+def apply_suppressions(
+    findings: Iterable[Finding],
+    suppressions: Sequence[Suppression],
+) -> tuple[list[Finding], list[Finding]]:
+    """Split findings into (active, suppressed) using exact rule ids only."""
+    file_rules = {item.rule_id for item in suppressions if item.scope == "file"}
+    targets = {
+        (item.rule_id, item.target_line) for item in suppressions if item.scope == "next-line"
+    }
+    active: list[Finding] = []
+    suppressed: list[Finding] = []
+    for finding in findings:
+        if finding.rule_id in file_rules or (finding.rule_id, finding.line) in targets:
+            suppressed.append(finding)
+        else:
+            active.append(finding)
+    return sort_findings(active), sort_findings(suppressed)
 
 
 def _finding(rule: Rule, path: str, line: int, excerpt: str) -> Finding:
