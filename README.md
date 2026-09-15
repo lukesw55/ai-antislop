@@ -112,7 +112,7 @@ Every rule has `id`, `code`, `impact`, `decision`, `scopes`, `kind`, `message`, 
 | `regex` | `pattern`, `flags` | Reports each line where the pattern matches; `flags` may include `IGNORECASE`, `MULTILINE`, `DOTALL` |
 | `sequence` | `line_pattern`, `min_consecutive`, `flags` | Reports one finding at the first line of a run of at least `min_consecutive` consecutive matching lines; only `IGNORECASE` is allowed |
 
-`regex` and `sequence` rules may also declare `unless_preceded_by` and `unless_followed_by`: lists of regex fragments, compiled case-insensitively, checked against the word immediately before or after the match on the same line. Markdown emphasis markers between them are ignored. The registry uses these fields to skip conditionals such as "if tests pass", explicit negations such as "not production-ready", and the technical phrases "magic number" and "10x multiplier". An exclusion applies to every alternative in the rule's pattern. Unknown keys are rejected when the registry loads.
+`regex` and `sequence` rules may also declare `unless_preceded_by` and `unless_followed_by`. Each field is either a list of regex fragments, which applies to every alternative of the rule's pattern, or an object whose keys are regexes matched against the whole matched text and whose values are such lists, so an exclusion can target one alternative. Fragments are compiled case-insensitively and checked against the text immediately before or after the match on the same line; Markdown emphasis markers in between are ignored. The registry uses these fields to skip conditionals and instructions such as "if all tests pass" or "ensure the build passes", explicit negations such as "not production-ready", and the phrases "magic number" and "10x multiplier" without affecting the other attention-bait terms. Unknown keys are rejected when the registry loads.
 
 Matches inside quotes, backticks, and Markdown code fences are never reported. A pattern anchored at line start should use `[ \t]` for indentation and `\r?$` before an end anchor so CRLF files report the right line; the engine also attributes a match to its first non-blank character.
 
@@ -263,7 +263,7 @@ For a user install, point the same command at the user-scoped hook path, for exa
 
 - A mechanical `BLOCK` is the configured policy for a pattern, not proof that the text is false. Review candidates before acting on them.
 - The executable detectors match English phrasing. The Portuguese triggers in the response reference say when to apply the skill; they do not extend detection to Portuguese text.
-- An `unless_*` exclusion applies to every alternative in a rule's pattern, not only to the alternative it was written for.
+- A list-form `unless_*` exclusion applies to every alternative in a rule's pattern. Use the object form to target one alternative.
 - Files above `--max-file-bytes` are not read, so file-level directives in them are not honored; their filename findings still apply.
 - YAML frontmatter counts toward the 10-line limit for `anti-slop-ignore-file`.
 - The semantic patterns in the references are applied by the agent. The unit tests and the rule corpus measure the deterministic layer only.
