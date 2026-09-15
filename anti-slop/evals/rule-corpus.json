@@ -183,6 +183,51 @@
       "must_not_find": ["D2-maturity-claim"]
     },
     {
+      "id": "S2-verification-claim/conditional-with-quantifier-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "If all tests pass, commit.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/conditional-with-determiner-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "When the build passes, deploy.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/instruction-with-quantifier-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Ensure all tests pass before pushing.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/emphasized-quantifier-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "If **all tests pass**, merge.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/determiner-without-conditional-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "The build passes on main.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
       "id": "S3-attention-bait/positive",
       "path": "README.md",
       "scope": "repository",
@@ -217,6 +262,33 @@
       "text": "Now 10x faster.\n",
       "expect": [{"rule_id": "S3-attention-bait", "line": 1, "decision": "TRIM"}],
       "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "S3-attention-bait/other-terms-before-numbers-remain-findings",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Our launch delivered shocking numbers.\n",
+      "expect": [{"rule_id": "S3-attention-bait", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "S3-attention-bait/revolutionary-numbers-remains-a-finding",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Revolutionary numbers this quarter.\n",
+      "expect": [{"rule_id": "S3-attention-bait", "line": 1, "decision": "TRIM"}],
+      "must_not_find": ["D2-polish-word"]
+    },
+    {
+      "id": "S3-attention-bait/emphasized-magic-number-excluded",
+      "path": "docs/style.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Avoid a magic **number** in the loop bound.\n",
+      "expect": [],
+      "must_not_find": ["S3-attention-bait"]
     },
     {
       "id": "S1-template-heading/positive",

@@ -90,7 +90,9 @@
       "kind": "regex",
       "pattern": "\\b(tests? pass(?:ed)?|build pass(?:ed|es)?|validated successfully|verified successfully|all checks pass(?:ed)?)\\b",
       "flags": ["IGNORECASE"],
-      "unless_preceded_by": ["if", "when", "whenever", "until", "once", "unless", "whether", "not", "never", "no", "ensure", "make sure", "so that"],
+      "unless_preceded_by": [
+        "(?:if|when|whenever|until|once|unless|whether|not|never|no|ensure|make sure|so that|verify that|confirm that|check that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*"
+      ],
       "message": "verification claim needs command or source evidence",
       "fix": "Cite the command and result, or say that verification was not run."
     },
@@ -103,7 +105,7 @@
       "kind": "regex",
       "pattern": "\\b(shocking|unbelievable|viral|mind[- ]blowing|revolutionary|magic|10x)\\b",
       "flags": ["IGNORECASE"],
-      "unless_followed_by": ["numbers?", "multipliers?"],
+      "unless_followed_by": {"magic": ["numbers?"], "10x": ["multipliers?"]},
       "message": "attention-bait phrasing",
       "fix": "State the observable result without promotional framing."
     },
