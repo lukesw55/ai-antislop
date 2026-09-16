@@ -58,7 +58,8 @@ def transcript_tail(transcript_path: str, limit: int = MAX_TRANSCRIPT_TAIL) -> s
                 previous = handle.read(1)
             handle.seek(start)
             data = handle.read(limit)
-    except OSError:
+    except OSError as exc:
+        debug(f"could not read the transcript at {transcript_path} ({describe(exc)})")
         return ""
 
     if start and previous not in {b"\n", b"\r"}:

@@ -108,6 +108,24 @@ def is_text_file(path: Path, known_filenames: frozenset[str]) -> bool:
     return path.suffix.lower() in TEXT_EXTS or path.name in known_filenames
 
 
+def symlink_component(path: Path) -> Path | None:
+    """Return the outermost symlinked directory on the way to ``path``."""
+    ancestors = []
+    current = path.parent
+    while True:
+        ancestors.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    for candidate in reversed(ancestors):
+        try:
+            if candidate.is_symlink():
+                return candidate
+        except OSError:
+            return None
+    return None
+
+
 def within_root(resolved: Path, root_resolved: Path) -> bool:
     """True when a fully resolved path still lies inside the resolved scan root."""
     try:
@@ -160,9 +178,11 @@ def git_tracked_files(scan_root: Path, known_filenames: frozenset[str]) -> list[
         if not name:
             continue
         path = scan_root / name
-        # Keep symlinks, including broken ones, so the scan can report them as
-        # unread coverage instead of dropping them silently.
-        if is_text_file(path, known_filenames) and (path.is_symlink() or path.is_file()):
+        # Keep every symlink, including broken ones and ones that name a
+        # directory, so the scan reports them as unread coverage instead of
+        # dropping them silently. A directory symlink has no text extension,
+        # so the is_text_file gate must not apply to it.
+        if path.is_symlink() or (is_text_file(path, known_filenames) and path.is_file()):
             paths[path.as_posix()] = path
     return sorted(paths.values(), key=lambda path: path_sort_key(path, scan_root))
 
@@ -173,13 +193,23 @@ def iter_files(root: Path, known_filenames: frozenset[str]) -> Iterable[Path]:
         yield from git_files
         return
     for current, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(
-            (name for name in dirnames if name not in SKIP_DIRS and not name.startswith(".DS_Store")),
-            key=lambda name: (name.casefold(), name),
-        )
+        kept: list[str] = []
+        linked: list[Path] = []
+        for name in sorted(dirnames, key=lambda item: (item.casefold(), item)):
+            if name in SKIP_DIRS or name.startswith(".DS_Store"):
+                continue
+            path = Path(current) / name
+            # os.walk never descends into a symlinked directory, so yield it
+            # here to have it counted as unread coverage.
+            if path.is_symlink():
+                linked.append(path)
+            else:
+                kept.append(name)
+        dirnames[:] = kept
+        yield from linked
         for name in sorted(filenames, key=lambda item: (item.casefold(), item)):
             path = Path(current) / name
-            if is_text_file(path, known_filenames):
+            if path.is_symlink() or is_text_file(path, known_filenames):
                 yield path
 
 
@@ -394,6 +424,14 @@ def main(argv: list[str] | None = None) -> int:
     elif target.is_dir():
         root, file_target = target.resolve(), False
     elif target.exists():
+        crossed = symlink_component(target)
+        if crossed is not None:
+            print(
+                f"Target path crosses a symlinked directory ({crossed}); "
+                "pass the resolved path instead",
+                file=sys.stderr,
+            )
+            return 1
         root, file_target = target.resolve(), True
     else:
         print(f"Path does not exist: {target}", file=sys.stderr)

@@ -185,6 +185,53 @@ class SymlinkSafetyTests(unittest.TestCase):
         self.assertNotIn("production-ready", proc.stdout)
         self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
 
+    def test_untracked_directory_symlink_is_counted(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            require_symlinks(self, tmp)
+            Path(outside, "docs").mkdir()
+            write(Path(outside, "docs"), "secret.md", self.TRIGGER)
+            Path(tmp, "docs").symlink_to(Path(outside, "docs"), target_is_directory=True)
+            write(tmp, "README.md", "# tool\n")
+            proc = run_scanner(tmp, "--json-v2")
+            gated = run_scanner(tmp, "--json-v2", "--fail-on-incomplete")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+        self.assertFalse(payload["summary"]["scan_complete"])
+        self.assertNotIn("production-ready", proc.stdout)
+        self.assertEqual(gated.returncode, 3, gated.stderr)
+
+    def test_tracked_directory_symlink_is_counted(self):
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            require_symlinks(self, tmp)
+            Path(outside, "docs").mkdir()
+            write(Path(outside, "docs"), "secret.md", self.TRIGGER)
+            Path(tmp, "docs").symlink_to(Path(outside, "docs"), target_is_directory=True)
+            write(tmp, "README.md", "# tool\n")
+            git_repo(tmp)
+            git_add_all(tmp)
+            proc = run_scanner(tmp, "--json-v2")
+            gated = run_scanner(tmp, "--json-v2", "--fail-on-incomplete")
+        payload = json.loads(proc.stdout)
+        # The tracked entry is the link itself, and it has no text extension.
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+        self.assertFalse(payload["summary"]["scan_complete"])
+        self.assertNotIn("production-ready", proc.stdout)
+        self.assertEqual(gated.returncode, 3, gated.stderr)
+
+    def test_file_reached_through_a_symlinked_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            require_symlinks(self, tmp)
+            Path(outside, "docs").mkdir()
+            write(Path(outside, "docs"), "secret.md", self.TRIGGER)
+            Path(tmp, "docs").symlink_to(Path(outside, "docs"), target_is_directory=True)
+            proc = run_scanner(str(Path(tmp, "docs", "secret.md")), "--json-v2")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("crosses a symlinked directory", proc.stderr)
+        self.assertNotIn("production-ready", proc.stdout)
+
     def test_path_resolving_outside_the_root_is_refused(self):
         sys.path.insert(0, str(SCANNER.parent.parent))
         sys.path.insert(0, str(SCANNER.parent))

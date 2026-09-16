@@ -188,7 +188,9 @@ The default exclusions are `.agents/`, `.claude/`, `.codex/`, and `.cursor/`. Us
 
 ### Coverage and symlinks
 
-A symlink's target is never read, whatever it points at, because an excerpt would republish that content. Filename rules still apply to the link's own name, and the link is recorded as unread coverage. The same applies to any path whose resolved location falls outside the scan root. The walk fallback does not descend into symlinked directories, and a symlinked directory passed as the scan target is rejected with exit 1 rather than followed.
+A symlink's target is never read, whatever it points at, because an excerpt would republish that content. Filename rules still apply to the link's own name, and the link is recorded as unread coverage. The same applies to any path whose resolved location falls outside the scan root.
+
+Symlinked directories count as unread coverage too. The walk fallback does not descend into them, and Git enumeration keeps every tracked link regardless of its name, since a directory link has no text extension. A symlinked directory passed as the scan target is rejected with exit 1, and so is a file target reached through a symlinked directory, such as `repo/link/file.md`; pass its resolved path when you mean to scan it.
 
 A file that is too large, unreadable, a symlink, or outside the root leaves the scan incomplete. By default that is tolerated, which suits exploratory runs. Pass `--fail-on-incomplete` to make it fail, and read `scan_complete` and `incomplete_files` in JSON v2 or `complete=yes|no` in the text summary. `--quiet` hides the notices but never changes the exit code.
 
@@ -249,7 +251,7 @@ The Stop hook never honors directives, so a response cannot dismiss its own revi
 | `context` | `hookSpecificOutput.additionalContext` | Claude receives the findings as hook feedback and continues the turn to act on them. |
 | `block` | `decision: "block"` with `reason` | Claude receives the findings as a blocking reason and continues the turn. |
 
-`context` and `block` follow the same loop protections described in the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks): the hook stays silent when `stop_hook_active` is set, and Claude Code caps consecutive continuations. `ANTI_SLOP_HOOK_BLOCK=1` is kept as an alias for `block`; a valid `ANTI_SLOP_HOOK_MODE` takes precedence over it. `ANTI_SLOP_RULES` points the hook at an alternative registry; an unreadable registry makes the hook exit silently. Set `ANTI_SLOP_DEBUG=1` to print one diagnostic line to `stderr` when that happens; the hook still exits 0, never blocks on an internal failure, and never sends an internal error to the model as feedback.
+`context` and `block` follow the same loop protections described in the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks): the hook stays silent when `stop_hook_active` is set, and Claude Code caps consecutive continuations. `ANTI_SLOP_HOOK_BLOCK=1` is kept as an alias for `block`; a valid `ANTI_SLOP_HOOK_MODE` takes precedence over it. `ANTI_SLOP_RULES` points the hook at an alternative registry; an unreadable registry makes the hook exit silently. Set `ANTI_SLOP_DEBUG=1` to print one diagnostic line to `stderr` when that happens, whether the failure is the registry or a transcript that cannot be read; the hook still exits 0, never blocks on an internal failure, and never sends an internal error to the model as feedback.
 
 Validate the configured registry without running a turn:
 
@@ -291,6 +293,7 @@ For a user install, point the same command at the user-scoped hook path, for exa
 - A list-form `unless_*` exclusion applies to every alternative in a rule's pattern. Use the object form to target one alternative.
 - Files above `--max-file-bytes` are not read, so file-level directives in them are not honored; their filename findings still apply.
 - YAML frontmatter counts toward the 10-line limit for `anti-slop-ignore-file`.
+- A single file passed as the target is refused when any directory on the way to it is a symlink. On a system where the temporary or home directory is itself a symlink, pass the resolved path. Directory targets are unaffected.
 - The semantic patterns in the references are applied by the agent. The unit tests and the rule corpus measure the deterministic layer only.
 
 ## Synchronize with the bundled script

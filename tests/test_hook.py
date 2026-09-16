@@ -313,6 +313,18 @@ class HookTests(unittest.TestCase):
         proc = run_hook({"hook_event_name": "Stop", "transcript_path": "/nonexistent/t.jsonl"})
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout.strip(), "")
+        self.assertEqual(proc.stderr, "")
+
+    def test_transcript_read_errors_reach_the_debug_channel(self):
+        proc = run_hook(
+            {"hook_event_name": "Stop", "transcript_path": "/nonexistent/t.jsonl"},
+            env_extra={"ANTI_SLOP_DEBUG": "1"},
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")
+        self.assertEqual(len(proc.stderr.strip().splitlines()), 1)
+        self.assertIn("could not read the transcript", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
 
     def test_graceful_on_empty_payload_and_bad_stdin(self):
         for stdin in ("{}", "not json"):

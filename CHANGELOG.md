@@ -21,13 +21,13 @@
 
 ### Audit remediation
 
-- The scanner no longer reads through a symlink, whatever it points at. Filename rules still apply to the link's own name, and the link counts as unread coverage. A resolved path that escapes the scan root is refused the same way, the walk fallback does not descend into symlinked directories, and a symlinked directory passed as the target exits 1.
+- The scanner no longer reads through a symlink, whatever it points at. Filename rules still apply to the link's own name, and the link counts as unread coverage, including a symlinked directory: the walk fallback surfaces it instead of pruning it silently, and Git enumeration keeps every tracked link regardless of its name. A resolved path that escapes the scan root is refused the same way. A symlinked directory passed as the target exits 1, and so does a file target reached through a symlinked directory.
 - `--fail-on-incomplete` exits 3 when any file's content could not be scanned. JSON v2 adds `files_skipped_symlink`, `files_outside_root`, `incomplete_files` and `scan_complete`; the text summary ends with `complete=yes|no`. Exit precedence is invalid input 1, incomplete coverage 3, finding or suppression gate 2, otherwise 0.
 - Registry validation is fully controlled. An unhashable entry in `scopes` raises `RegistryError` instead of `TypeError`, an unknown scope names the accepted values, and keys are checked against the rule's detector kind, so `filenames` on a regex rule or `pattern` on a sequence rule is rejected.
 - `S2-verification-claim` stops firing on three instruction shapes: a leading subordinate clause with a comma, a second imperative after a comma, and an obligation modal. Assertions such as "I confirm that all tests pass" and "Our CI reports that all tests pass" are still reported.
 - Code fences are masked inside blockquotes, bullet items and ordered items, including nesting. Suppression directives inside those fences stop being recognized, since directive parsing masks through the same function.
 - JSON v2 reports every valid suppression with its reason, the findings credited to it and whether it matched nothing. `--fail-on-unused-suppression` exits 2 for a directive that matched no finding. Overlap is deterministic: next-line outranks file, ties go to the lowest directive line, and a directive that matched a finding credited elsewhere is still counted as used.
-- The Stop hook accepts `--check`, which validates the configured registry, requires a rule in the response scope and never reads stdin. `ANTI_SLOP_DEBUG=1` prints one diagnostic line to stderr on an internal failure; the hook still exits 0 and never sends an internal error to the model.
+- The Stop hook accepts `--check`, which validates the configured registry, requires a rule in the response scope and never reads stdin. `ANTI_SLOP_DEBUG=1` prints one diagnostic line to stderr on an internal failure, registry errors and unreadable transcripts alike; the hook still exits 0 and never sends an internal error to the model.
 - The skill's trigger names its cases explicitly and lists what it is not for, replacing a description broad enough to fire on routine work. `trigger-queries.json` carries matching positive and negative queries and states that it is manual material.
 - CI declares `contents: read`, cancels superseded runs per ref, bounds the job at 15 minutes, pins `actions/checkout` and `actions/setup-python` to commit SHAs read from the official repositories, runs the self-scan with `--fail-on-incomplete`, and runs the hook health check.
 - A pull request template records goal, changes, verification and limitations, and carries a base checkbox with the retarget steps for a stacked pull request, which is how deliveries 2 and 3 previously failed to reach `main`.
@@ -49,6 +49,6 @@ Hook modes exercised on 2026-09-15 in Claude Code 2.1.272 with a project-level S
 
 Installation exercised on 2026-09-15 with `npx skills add <clone> --skill anti-slop -a claude-code -y` (skills CLI 1.5.26) in an empty project: the whole `anti-slop/` tree was copied to `.claude/skills/anti-slop/`, the installed scanner loaded its registry, and no hook was enabled.
 
-Unit suite: 115 tests on Python 3.11.15 locally, one skipped where the account can read a mode 000 file; CI covers Python 3.9, 3.11, and 3.13 on Ubuntu and 3.11 on Windows.
+Unit suite: 119 tests on Python 3.11.15 locally, one skipped where the account can read a mode 000 file; CI covers Python 3.9, 3.11, and 3.13 on Ubuntu and 3.11 on Windows.
 
 The external counts above were re-run on 2026-09-16 at the same four commits with the scanner as it stands after the audit remediation. Every count is unchanged.
