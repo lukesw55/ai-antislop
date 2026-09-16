@@ -509,6 +509,76 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["suppressed_findings"], 1)
         self.assertEqual(proc.stderr, "")
 
+    def test_json_v2_reports_every_directive_with_its_reason_and_use(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(
+                tmp,
+                "doc.md",
+                "<!-- anti-slop-ignore-file S2-verification-claim -- quotes the CI policy -->\n"
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- the same claim -->\n"
+                "All tests passed.\n"
+                "<!-- anti-slop-ignore-next-line S3-attention-bait -- never matches -->\n"
+                "plain prose\n",
+            )
+            proc = run_scanner(tmp, "--json-v2")
+            gated = run_scanner(tmp, "--fail-on-unused-suppression", "--quiet")
+            ungated = run_scanner(tmp, "--quiet")
+        payload = json.loads(proc.stdout)
+        rows = payload["suppressions"]
+        self.assertEqual(
+            [
+                (r["rule_id"], r["scope"], r["directive_line"], r["target_line"],
+                 r["matched_findings"], r["unused"])
+                for r in rows
+            ],
+            [
+                ("S2-verification-claim", "file", 1, None, 0, False),
+                ("S2-verification-claim", "next-line", 2, 3, 1, False),
+                ("S3-attention-bait", "next-line", 4, 5, 0, True),
+            ],
+        )
+        self.assertEqual(rows[0]["reason"], "quotes the CI policy")
+        self.assertEqual(rows[0]["path"], "doc.md")
+        # The overlapping directives cover one finding between them, counted once.
+        self.assertEqual(payload["summary"]["suppressed_findings"], 1)
+        self.assertEqual(payload["summary"]["total_findings"], 0)
+        self.assertEqual(payload["findings"], [])
+        self.assertIn("matched no finding", proc.stderr)
+        self.assertEqual(gated.returncode, 2, gated.stderr)
+        self.assertEqual(gated.stderr, "")
+        self.assertEqual(ungated.returncode, 0, ungated.stderr)
+
+    def test_unused_gate_passes_when_every_directive_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(
+                tmp,
+                "doc.md",
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- quoted policy -->\n"
+                "All tests passed.\n",
+            )
+            proc = run_scanner(tmp, "--json-v2", "--fail-on-unused-suppression")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual([r["unused"] for r in payload["suppressions"]], [False])
+        self.assertEqual(payload["summary"]["suppressed_findings"], 1)
+
+    def test_json_v1_is_unaffected_by_suppression_reporting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(
+                tmp,
+                "doc.md",
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- quoted policy -->\n"
+                "All tests passed.\n"
+                "This tool is production-ready.\n",
+            )
+            proc = run_scanner(tmp, "--json")
+        findings = findings_of(proc)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(
+            set(findings[0]), {"path", "line", "code", "severity", "message", "excerpt"}
+        )
+        self.assertEqual(findings[0]["line"], 3)
+
     def test_directive_inside_fence_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(

@@ -12,7 +12,10 @@ Modes, selected with ``ANTI_SLOP_HOOK_MODE``:
 
 ``ANTI_SLOP_HOOK_BLOCK=1`` is kept as an alias for ``block``. ``ANTI_SLOP_RULES``
 points at an alternative rule registry. Every failure path exits 0 without
-output, so a broken hook never blocks a session.
+output, so a broken hook never blocks a session; set ``ANTI_SLOP_DEBUG=1`` to
+print one diagnostic line to stderr when that happens.
+
+Run with ``--check`` to validate the configured registry without reading stdin.
 """
 from __future__ import annotations
 
@@ -31,6 +34,16 @@ from lib.anti_slop_engine import Finding, Rule, load_rules, scan_text  # noqa: E
 MAX_TRANSCRIPT_TAIL = 2 * 1024 * 1024
 MAX_FINDINGS = 5
 VALID_MODES = ("warn", "context", "block")
+
+
+def debug(message: str) -> None:
+    """Report an internal failure on stderr, opt-in and one line at a time."""
+    if os.environ.get("ANTI_SLOP_DEBUG") == "1":
+        print(f"anti-slop hook: {message}", file=sys.stderr)
+
+
+def describe(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
 
 
 def transcript_tail(transcript_path: str, limit: int = MAX_TRANSCRIPT_TAIL) -> str:
@@ -140,10 +153,38 @@ def feedback_text(findings: Sequence[Finding], *, instruct: bool = True) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def health_check() -> int:
+    """Validate the configured registry without touching stdin."""
+    registry = registry_path()
+    try:
+        rules = load_rules(registry)
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        print(f"anti-slop hook: registry error: {describe(exc)}", file=sys.stderr)
+        return 1
+    response_rules = [rule for rule in rules if "response" in rule.scopes]
+    if not response_rules:
+        print(
+            "anti-slop hook: registry error: no rules in the response scope",
+            file=sys.stderr,
+        )
+        return 1
+    source = registry if registry is not None else "bundled rules.json"
+    print(
+        f"anti-slop hook: OK, {len(rules)} rules, "
+        f"{len(response_rules)} in the response scope ({source})"
+    )
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in arguments:
+        return health_check()
+
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception as exc:
+        debug(f"could not parse the Stop payload ({describe(exc)})")
         return 0
     if not isinstance(payload, dict) or payload.get("stop_hook_active"):
         return 0
@@ -159,8 +200,10 @@ def main() -> int:
 
     try:
         findings = detect(message, load_rules(registry_path()))
-    except Exception:
-        # An optional enforcement hook must not block on an invalid registry.
+    except Exception as exc:
+        # An optional enforcement hook must not block on an invalid registry,
+        # and an internal error is never sent to the model as feedback.
+        debug(f"detection failed ({describe(exc)})")
         return 0
     if not findings:
         return 0

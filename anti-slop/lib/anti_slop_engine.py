@@ -144,6 +144,20 @@ class DirectiveProblem:
     reason: str
 
 
+@dataclass(frozen=True)
+class SuppressionUse:
+    """How one directive was exercised by a file's findings.
+
+    ``matched_findings`` counts the findings credited to this directive; a
+    more specific directive can take credit for a finding this one also
+    matched, which is why ``used`` is tracked separately.
+    """
+
+    suppression: Suppression
+    matched_findings: int
+    used: bool
+
+
 def _require_text(raw: dict[str, object], key: str, rule_id: str) -> str:
     value = raw.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -653,23 +667,62 @@ def parse_directives(
     return suppressions, problems
 
 
+def _matching_suppressions(
+    finding: Finding, suppressions: Sequence[Suppression]
+) -> list[Suppression]:
+    return [
+        item
+        for item in suppressions
+        if item.rule_id == finding.rule_id
+        and (item.scope == "file" or item.target_line == finding.line)
+    ]
+
+
+def suppression_report(
+    findings: Iterable[Finding],
+    suppressions: Sequence[Suppression],
+) -> tuple[list[Finding], list[Finding], list[SuppressionUse]]:
+    """Split findings and record how each directive was exercised.
+
+    A finding matched by several directives is credited to the most specific
+    one: a next-line directive outranks a file directive, and ties go to the
+    lowest directive line. Every directive that matched the finding is still
+    marked used.
+    """
+    order = {id(item): index for index, item in enumerate(suppressions)}
+    credited = {id(item): 0 for item in suppressions}
+    matched_any = {id(item): False for item in suppressions}
+    active: list[Finding] = []
+    suppressed: list[Finding] = []
+
+    for finding in findings:
+        matches = _matching_suppressions(finding, suppressions)
+        if not matches:
+            active.append(finding)
+            continue
+        suppressed.append(finding)
+        for item in matches:
+            matched_any[id(item)] = True
+        winner = min(
+            matches,
+            key=lambda item: (0 if item.scope == "next-line" else 1, item.directive_line, order[id(item)]),
+        )
+        credited[id(winner)] += 1
+
+    usage = [
+        SuppressionUse(item, credited[id(item)], matched_any[id(item)])
+        for item in suppressions
+    ]
+    return sort_findings(active), sort_findings(suppressed), usage
+
+
 def apply_suppressions(
     findings: Iterable[Finding],
     suppressions: Sequence[Suppression],
 ) -> tuple[list[Finding], list[Finding]]:
     """Split findings into (active, suppressed) using exact rule ids only."""
-    file_rules = {item.rule_id for item in suppressions if item.scope == "file"}
-    targets = {
-        (item.rule_id, item.target_line) for item in suppressions if item.scope == "next-line"
-    }
-    active: list[Finding] = []
-    suppressed: list[Finding] = []
-    for finding in findings:
-        if finding.rule_id in file_rules or (finding.rule_id, finding.line) in targets:
-            suppressed.append(finding)
-        else:
-            active.append(finding)
-    return sort_findings(active), sort_findings(suppressed)
+    active, suppressed, _ = suppression_report(findings, suppressions)
+    return active, suppressed
 
 
 def _finding(rule: Rule, path: str, line: int, excerpt: str) -> Finding:

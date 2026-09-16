@@ -233,6 +233,82 @@ class HookTests(unittest.TestCase):
         proc = run_hook(stop_payload(message))
         self.assertIn("S2", json.loads(proc.stdout)["systemMessage"])
 
+    def test_health_check_with_the_bundled_registry(self):
+        proc = subprocess.run(
+            [sys.executable, str(HOOK), "--check"],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("response scope", proc.stdout)
+        self.assertEqual(proc.stderr, "")
+
+    def test_health_check_with_a_valid_alternate_registry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp, "rules.json")
+            registry.write_text(
+                json.dumps({"schema_version": 1, "rules": [ZEBRA_RULE]}), encoding="utf-8"
+            )
+            env = dict(os.environ, ANTI_SLOP_RULES=str(registry))
+            proc = subprocess.run(
+                [sys.executable, str(HOOK), "--check"],
+                capture_output=True, text=True, env=env, timeout=30,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(str(registry), proc.stdout)
+
+    def test_health_check_reports_an_invalid_registry(self):
+        env = dict(os.environ, ANTI_SLOP_RULES="/nonexistent/rules.json")
+        proc = subprocess.run(
+            [sys.executable, str(HOOK), "--check"],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("registry error", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
+    def test_health_check_rejects_a_registry_without_response_rules(self):
+        repository_only = dict(ZEBRA_RULE, scopes=["repository"])
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp, "rules.json")
+            registry.write_text(
+                json.dumps({"schema_version": 1, "rules": [repository_only]}), encoding="utf-8"
+            )
+            env = dict(os.environ, ANTI_SLOP_RULES=str(registry))
+            proc = subprocess.run(
+                [sys.executable, str(HOOK), "--check"],
+                capture_output=True, text=True, env=env, timeout=30,
+            )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no rules in the response scope", proc.stderr)
+
+    def test_internal_failures_are_silent_unless_debug_is_set(self):
+        payload = stop_payload("Great question!")
+        quiet = run_hook(payload, env_extra={"ANTI_SLOP_RULES": "/nonexistent/rules.json"})
+        loud = run_hook(
+            payload,
+            env_extra={"ANTI_SLOP_RULES": "/nonexistent/rules.json", "ANTI_SLOP_DEBUG": "1"},
+        )
+        self.assertEqual(quiet.returncode, 0)
+        self.assertEqual(quiet.stdout.strip(), "")
+        self.assertEqual(quiet.stderr, "")
+        self.assertEqual(loud.returncode, 0)
+        self.assertEqual(loud.stdout.strip(), "")
+        self.assertEqual(len(loud.stderr.strip().splitlines()), 1)
+        self.assertIn("detection failed", loud.stderr)
+        self.assertNotIn("Traceback", loud.stderr)
+
+    def test_debug_does_not_change_the_three_modes(self):
+        payload = stop_payload("Great question! All tests passed.")
+        for mode, key in (("warn", "systemMessage"), ("context", "hookSpecificOutput"), ("block", "decision")):
+            with self.subTest(mode=mode):
+                plain = run_hook(payload, env_extra={"ANTI_SLOP_HOOK_MODE": mode})
+                debugged = run_hook(
+                    payload, env_extra={"ANTI_SLOP_HOOK_MODE": mode, "ANTI_SLOP_DEBUG": "1"}
+                )
+                self.assertEqual(plain.stdout, debugged.stdout)
+                self.assertIn(key, json.loads(plain.stdout))
+                self.assertEqual(debugged.stderr, "")
+
     def test_graceful_on_missing_transcript(self):
         proc = run_hook({"hook_event_name": "Stop", "transcript_path": "/nonexistent/t.jsonl"})
         self.assertEqual(proc.returncode, 0)

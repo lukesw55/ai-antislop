@@ -8,7 +8,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -20,13 +20,13 @@ from lib.anti_slop_engine import (  # noqa: E402
     Finding,
     RegistryError,
     Rule,
-    apply_suppressions,
     count_decisions,
     fails_at,
     filename_findings,
     load_rules,
     parse_directives,
     scan_text,
+    suppression_report,
     sort_findings,
 )
 
@@ -74,6 +74,7 @@ class FileScan:
     suppressed: int
     problems: list[tuple[int, str]]
     state: str
+    uses: list = field(default_factory=list)
 
 
 def nonnegative_int(value: str) -> int:
@@ -225,12 +226,13 @@ def scan_file(
             skip_lines={item.directive_line for item in suppressions},
         )
     )
-    active, suppressed = apply_suppressions(findings, suppressions)
+    active, suppressed, uses = suppression_report(findings, suppressions)
     return FileScan(
         active,
         len(suppressed),
         [(problem.line, problem.reason) for problem in problems],
         "scanned",
+        uses,
     )
 
 
@@ -281,12 +283,19 @@ def emit_notices(
     returned_findings: int,
     max_file_bytes: int,
     problems: Sequence[tuple[str, int, str]],
+    unused: Sequence[dict],
     quiet: bool,
 ) -> None:
     if quiet:
         return
     for rel, line, reason in problems:
         print(f"warning: {rel}:{line}: anti-slop directive ignored: {reason}", file=sys.stderr)
+    for item in unused:
+        print(
+            f"warning: {item['path']}:{item['directive_line']}: "
+            f"suppression for {item['rule_id']} matched no finding",
+            file=sys.stderr,
+        )
     omitted = total_findings - returned_findings
     if omitted:
         print(
@@ -355,6 +364,11 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Also scan default-excluded paths: {', '.join(DEFAULT_EXCLUDES)}",
     )
     parser.add_argument(
+        "--fail-on-unused-suppression",
+        action="store_true",
+        help="Exit 2 when a valid suppression directive matched no finding",
+    )
+    parser.add_argument(
         "--fail-on-incomplete",
         action="store_true",
         help="Exit 3 when any file's content could not be scanned",
@@ -404,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = ScanStats()
     findings: list[Finding] = []
     problems: list[tuple[str, int, str]] = []
+    suppressions: list[dict[str, object]] = []
     for path in files:
         rel = path.relative_to(scan_root).as_posix()
         if is_excluded(rel, excludes):
@@ -413,6 +428,19 @@ def main(argv: list[str] | None = None) -> int:
         findings.extend(scan.findings)
         stats.suppressed_findings += scan.suppressed
         problems.extend((rel, line, reason) for line, reason in scan.problems)
+        suppressions.extend(
+            {
+                "path": rel,
+                "rule_id": use.suppression.rule_id,
+                "scope": use.suppression.scope,
+                "directive_line": use.suppression.directive_line,
+                "target_line": use.suppression.target_line,
+                "reason": use.suppression.reason,
+                "matched_findings": use.matched_findings,
+                "unused": not use.used,
+            }
+            for use in scan.uses
+        )
         if scan.state == "scanned":
             stats.files_scanned += 1
         elif scan.state == "too_large":
@@ -439,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
                     "findings": [item.detailed_dict() for item in returned],
                     "truncated": bool(omitted),
                     "omitted_findings": omitted,
+                    "suppressions": suppressions,
                     "summary": summary,
                 },
                 indent=2,
@@ -464,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
         returned_findings=len(returned),
         max_file_bytes=args.max_file_bytes,
         problems=problems,
+        unused=[item for item in suppressions if item["unused"]],
         quiet=args.quiet,
     )
 
@@ -474,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     threshold = args.fail_on or ("block" if args.fail_on_block else None)
     if threshold and fails_at(findings, threshold):
+        return 2
+    if args.fail_on_unused_suppression and any(item["unused"] for item in suppressions):
         return 2
     return 0
 
