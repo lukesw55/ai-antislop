@@ -1,18 +1,25 @@
 {
+  "note": "Manual validation material for skill activation. These queries are not executed by the test suite.",
   "should_trigger": [
-    "remove AI slop from this README",
-    "review this diff for unsupported repo claims",
-    "tira o ruído desse PR description",
-    "this generated file feels ChatGPT-ish",
+    "remove the AI slop from this README",
+    "strip the boilerplate out of this PR description",
+    "audit this changelog for unsupported claims",
+    "check the repo for contamination from agent runs",
+    "review this AI-generated README before I publish it",
+    "run anti-slop in Sweep mode over docs/",
+    "apply anti-slop in Gate mode to this draft",
+    "review the current diff in Diff mode for AI-shaped output",
     "scan the repo for unrequested summary files",
-    "make this implementation note useful without losing constraints",
     "review these image captions for fake evidence"
   ],
   "should_not_trigger_or_keep_light": [
+    "implement pagination for the orders endpoint",
+    "fix the typo in line 40 of the README",
     "return only this JSON object unchanged",
-    "what is 2+2?",
     "paste the raw log exactly",
     "write a detailed onboarding runbook; verbosity is okay",
-    "keep this compliance section explicit and complete"
+    "keep this compliance section explicit and complete",
+    "rename this variable across the module",
+    "what is 2+2?"
   ]
 }

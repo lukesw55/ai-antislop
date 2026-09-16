@@ -12,9 +12,12 @@ sys.path.insert(0, str(SKILL_ROOT))
 
 from lib.anti_slop_engine import (  # noqa: E402
     RegistryError,
+    Suppression,
+    apply_suppressions,
     fails_at,
     filename_findings,
     load_rules,
+    parse_directives,
     scan_text,
 )
 
@@ -65,7 +68,7 @@ class RegistryTests(unittest.TestCase):
     def test_unknown_key_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = write_registry(tmp, rule(unless_preceeded_by=["not"]))
-            with self.assertRaisesRegex(RegistryError, "unknown keys"):
+            with self.assertRaisesRegex(RegistryError, "not allowed for a regex rule"):
                 load_rules(path)
 
     def test_sequence_rule_validation(self):
@@ -102,6 +105,41 @@ class RegistryTests(unittest.TestCase):
         for label, raw in invalid.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaises(RegistryError):
+                    load_rules(write_registry(tmp, raw))
+
+    def test_malformed_scopes_raise_registry_errors(self):
+        invalid = {
+            "nested list": rule(scopes=[["repository"]]),
+            "integer item": rule(scopes=[1]),
+            "bare string": rule(scopes="repository"),
+            "mapping": rule(scopes={}),
+            "unknown scope": rule(scopes=["everywhere"]),
+            "empty list": rule(scopes=[]),
+        }
+        for label, raw in invalid.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(RegistryError):
+                    load_rules(write_registry(tmp, raw))
+
+    def test_keys_are_validated_against_the_detector_kind(self):
+        sequence = dict(kind="sequence", pattern=None, line_pattern="^- ", min_consecutive=3)
+        invalid = {
+            "filenames on a regex rule": rule(filenames=["X.md"]),
+            "line_pattern on a regex rule": rule(line_pattern="^- "),
+            "min_consecutive on a regex rule": rule(min_consecutive=3),
+            "pattern on a sequence rule": rule(**dict(sequence, pattern="\\bx\\b")),
+            "filenames on a sequence rule": rule(**dict(sequence, filenames=["X.md"])),
+            "min_consecutive on a filename rule": rule(
+                kind="filename", pattern=None, filenames=["X.md"], min_consecutive=3
+            ),
+            "pattern on a filename rule": rule(kind="filename", filenames=["X.md"]),
+            "exclusion on a filename rule": rule(
+                kind="filename", pattern=None, filenames=["X.md"], unless_preceded_by=["not"]
+            ),
+        }
+        for label, raw in invalid.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(RegistryError, "not allowed for a"):
                     load_rules(write_registry(tmp, raw))
 
     def test_object_form_exclusion_targets_one_alternative(self):
@@ -218,6 +256,47 @@ class DetectionTests(unittest.TestCase):
                     ["S2-verification-claim"],
                 )
 
+    def test_obligation_and_leading_clause_instructions_are_excluded(self):
+        for text in (
+            "Before merging, ensure all tests pass.\n",
+            "Run lint, then ensure all tests pass.\n",
+            "You must ensure all tests pass.\n",
+            "We should verify that all tests pass.\n",
+            "Contributors must confirm that the build passes.\n",
+            "Before pushing ensure all tests pass.\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.scan_repo(text), [])
+        for text in ("Our CI reports that all tests pass.\n", "The build passes on main.\n"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    [finding.rule_id for finding in self.scan_repo(text)],
+                    ["S2-verification-claim"],
+                )
+
+    def test_fences_are_masked_inside_quote_and_list_containers(self):
+        for text in (
+            "> ```text\n> Production-ready. All tests passed.\n> ```\n",
+            "- ```text\n  Production-ready.\n```\n",
+            "> - ```text\n>   All tests passed.\n>   ```\n",
+            "1. ```text\n   Production-ready.\n   ```\n",
+            "> ```text\n> Production-ready.\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.scan_repo(text), [])
+        after = self.scan_repo("> ```text\n> sample\n> ```\n\nProduction-ready.\n")
+        self.assertEqual([(f.rule_id, f.line) for f in after], [("D2-maturity-claim", 5)])
+
+    def test_directives_inside_container_fences_are_not_recognized(self):
+        text = (
+            "> ```md\n"
+            "> <!-- anti-slop-ignore-file D2-maturity-claim -- example -->\n"
+            "> ```\n"
+            "Production-ready.\n"
+        )
+        suppressions, problems = parse_directives(text, load_rules(), markdown=True)
+        self.assertEqual((suppressions, problems), ([], []))
+
     def test_conditional_and_negated_claims_are_excluded(self):
         for text in (
             "If tests pass, commit:\n",
@@ -264,6 +343,123 @@ class DetectionTests(unittest.TestCase):
         self.assertFalse(fails_at(trim, "BLOCK"))
         self.assertTrue(fails_at(trim, "TRIM"))
         self.assertTrue(fails_at(flag, "FLAG"))
+
+
+class DirectiveTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = load_rules()
+
+    def parse(self, text, markdown=False):
+        return parse_directives(text, self.rules, markdown=markdown)
+
+    def test_parses_all_three_comment_forms(self):
+        text = (
+            "<!-- anti-slop-ignore-file D7-summary-file -- mdBook index -->\n"
+            "# anti-slop-ignore-next-line S2-verification-claim -- conditional\n"
+            "if tests pass: ok\n"
+            "  // anti-slop-ignore-next-line S3-attention-bait -- product name\n"
+            "Magic Mouse\n"
+        )
+        suppressions, problems = self.parse(text)
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            [(s.rule_id, s.scope, s.directive_line, s.target_line) for s in suppressions],
+            [
+                ("D7-summary-file", "file", 1, None),
+                ("S2-verification-claim", "next-line", 2, 3),
+                ("S3-attention-bait", "next-line", 4, 5),
+            ],
+        )
+        self.assertEqual(suppressions[0].reason, "mdBook index")
+
+    def test_non_directive_lines_are_left_alone(self):
+        for text in (
+            "code = 1  # anti-slop-ignore-next-line S2-verification-claim -- trailing\nx\n",
+            "# anti-slop-ignore-next-lines S2-verification-claim -- plural\nx\n",
+            "# anti-slop-ignore-file-wide S2-verification-claim -- suffix\nx\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.parse(text), ([], []))
+
+    def test_malformed_and_misplaced_directives_are_problems(self):
+        cases = {
+            "unterminated html": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x\nAll tests passed.\n",
+                "whole line",
+            ),
+            "content after the html closer": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x --> All tests passed.\nmore\n",
+                "whole line",
+            ),
+            "second comment after the html closer": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x --> claim <!-- -->\nmore\n",
+                "whole line",
+            ),
+            "missing reason": (
+                "# anti-slop-ignore-next-line S2-verification-claim\nx\n",
+                "expected",
+            ),
+            "unknown rule": (
+                "# anti-slop-ignore-next-line Nope -- x\nx\n",
+                "unknown rule id",
+            ),
+            "no following line": (
+                "x\n# anti-slop-ignore-next-line S2-verification-claim -- x\n",
+                "no following line",
+            ),
+            "file directive too late": (
+                "\n" * 10 + "# anti-slop-ignore-file S2-verification-claim -- late\nx\n",
+                "first 10 lines",
+            ),
+        }
+        for label, (text, fragment) in cases.items():
+            with self.subTest(label=label):
+                suppressions, problems = self.parse(text)
+                self.assertEqual(suppressions, [])
+                self.assertEqual(len(problems), 1)
+                self.assertIn(fragment, problems[0].reason)
+
+    def test_fenced_directives_are_not_recognized_in_markdown(self):
+        text = "```\n# anti-slop-ignore-file D2-maturity-claim -- example\n```\nProduction-ready.\n"
+        self.assertEqual(self.parse(text, markdown=True), ([], []))
+        suppressions, _ = self.parse(text, markdown=False)
+        self.assertEqual([s.scope for s in suppressions], ["file"])
+
+    def test_apply_suppressions_uses_exact_rule_and_line(self):
+        findings = scan_text(
+            "Production-ready.\nProduction-ready.\nAll tests passed.\n",
+            path="x.md",
+            scope="repository",
+            markdown=True,
+        )
+        suppressions = [
+            Suppression("D2-maturity-claim", "next-line", 0, 2, "vendor wording"),
+            Suppression("S2-verification-claim", "file", 0, None, "quoted policy"),
+        ]
+        active, suppressed = apply_suppressions(findings, suppressions)
+        self.assertEqual([(f.rule_id, f.line) for f in active], [("D2-maturity-claim", 1)])
+        self.assertEqual(
+            [(f.rule_id, f.line) for f in suppressed],
+            [("D2-maturity-claim", 2), ("S2-verification-claim", 3)],
+        )
+
+    def test_skip_lines_drops_findings_on_those_lines(self):
+        regex = scan_text(
+            "Production-ready.\nProduction-ready.\n",
+            path="x.md",
+            scope="repository",
+            markdown=True,
+            skip_lines={1},
+        )
+        self.assertEqual([f.line for f in regex], [2])
+        sequence = scan_text(
+            "- **Alpha:** 1\n- **Beta:** 2\n- **Gamma:** 3\n",
+            path="x.md",
+            scope="repository",
+            markdown=True,
+            skip_lines={1},
+        )
+        self.assertEqual(sequence, [])
 
 
 if __name__ == "__main__":

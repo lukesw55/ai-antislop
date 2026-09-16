@@ -1,6 +1,6 @@
 ---
 name: anti-slop
-description: Detect, classify, gate, and rewrite AI-shaped repository output without losing behavior or evidence. Use when writing or reviewing code, documentation, README text, PRs, issues, changelogs, generated artifacts, media metadata, or assistant responses that may affect a repository, especially when the user asks to remove AI slop, boilerplate, generic phrasing, unsupported claims, fake polish, or unnecessary structure.
+description: Use when the user explicitly asks to remove AI slop or boilerplate, audit unsupported claims or repository contamination, or review AI-generated repository output in Gate, Sweep, or Diff mode. Covers README text, PR and issue descriptions, changelogs, generated artifacts, media metadata, and assistant responses. Do not use for routine coding, ordinary proofreading, raw JSON or log passthrough, or repository work where slop, evidence, contamination, or AI-shaped output is not part of the task.
 ---
 
 # Anti-slop
@@ -60,6 +60,7 @@ For deterministic detection:
 - Record exact paths, lines, rule IDs, and matched text when available.
 - Treat a pattern match as a candidate, not proof of slop.
 - Use `scripts/scan_repo_slop.py` only when a static repository scan helps. Keep it read-only; use its existing `--fail-on-block` behavior only when a failing gate was requested.
+- Pass `--rules PATH` only for a registry that the repository or the user supplies. Do not edit `rules/rules.json` to silence a finding.
 
 For semantic detection:
 
@@ -109,6 +110,7 @@ In Gate mode, deliver only after all applicable gates pass. In Sweep and Diff mo
 ### 5. Rewrite
 
 - Rewrite only in Gate mode or after explicit authorization to edit audited material.
+- Never add an `anti-slop-ignore-next-line` or `anti-slop-ignore-file` directive to dismiss a finding unless the user asked for it and the stated reason is true. The Stop hook ignores directives inside responses.
 - Make the smallest change that resolves the finding.
 - Preserve APIs, control flow, error behavior, security boundaries, citations, examples required for use, and verified facts.
 - Replace unsupported certainty with a narrower fact, an attributed source, or an explicit uncertainty.
@@ -147,6 +149,7 @@ Do not load every reference by default. Keep detailed patterns in their referenc
 - Use `scripts/scan_repo_slop.py` as a read-only candidate detector, not as a semantic judge or rewrite engine.
 - Use `hooks/anti-slop-stop.py` only as an optional Claude Code hook. Review its configuration before installation and do not assume that it is installed or enabled.
 - Keep scanner and hook decisions aligned through `rules/rules.json`; do not duplicate executable patterns in this file.
+- The executable detectors match English phrasing. The Portuguese triggers in `references/response-patterns.md` say when to apply the skill; they do not mean the scanner detects Portuguese slop.
 
 ## Format audits consistently
 

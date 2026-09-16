@@ -327,6 +327,114 @@
       "must_not_find": ["S2-verification-claim"]
     },
     {
+      "id": "S2-verification-claim/imperative-after-leading-clause-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Before merging, ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-after-comma-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Run lint, then ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/obligation-modal-must-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "You must ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/obligation-modal-should-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "We should verify that all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/obligation-modal-with-subject-noun-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Contributors must confirm that the build passes.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/subordinate-opening-clause-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Before pushing ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/reported-verification-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Our CI reports that all tests pass.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "fences/blockquote-container",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "> ```text\n> Production-ready. All tests passed.\n> ```\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim", "S2-verification-claim"]
+    },
+    {
+      "id": "fences/list-item-container",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "- ```text\n  Production-ready.\n```\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "fences/nested-quote-and-list-container",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "> - ```text\n>   All tests passed.\n>   ```\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "fences/ordered-list-container",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "1. ```text\n   Production-ready.\n   ```\n",
+      "expect": [],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "fences/text-after-a-container-fence-is-still-scanned",
+      "path": "README.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "> ```text\n> sample\n> ```\n\nProduction-ready.\n",
+      "expect": [{"rule_id": "D2-maturity-claim", "line": 5, "decision": "BLOCK"}],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
       "id": "S3-attention-bait/positive",
       "path": "README.md",
       "scope": "repository",

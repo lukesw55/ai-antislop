@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Collection, Iterable, Sequence
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -25,7 +25,7 @@ FLAG_VALUES = {
 }
 SEQUENCE_FLAGS = {"IGNORECASE"}
 DECISION_ORDER = {"BLOCK": 0, "TRIM": 1, "FLAG": 2}
-KNOWN_KEYS = {
+COMMON_KEYS = {
     "id",
     "code",
     "impact",
@@ -34,21 +34,36 @@ KNOWN_KEYS = {
     "kind",
     "message",
     "fix",
-    "pattern",
-    "line_pattern",
-    "flags",
-    "filenames",
-    "min_consecutive",
-    "unless_preceded_by",
-    "unless_followed_by",
     "notes",
+}
+EXCLUSION_KEYS = {"unless_preceded_by", "unless_followed_by"}
+KIND_KEYS = {
+    "filename": {"filenames"},
+    "regex": {"pattern", "flags"} | EXCLUSION_KEYS,
+    "sequence": {"line_pattern", "flags", "min_consecutive"} | EXCLUSION_KEYS,
 }
 
 # Whitespace and Markdown emphasis markers allowed between an exclusion word
 # and the matched text on the same line.
 _EXCLUSION_GAP = r"[\s*_`~]*"
 _PRECEDED_TEMPLATE = r"(?<![\w'])(?:%s)" + _EXCLUSION_GAP + r"\Z"
+
+# A code fence still opens and closes inside the containers a Markdown file
+# commonly wraps it in: blockquotes, bullet items and ordered items. This is a
+# bounded prefix, not a CommonMark parser.
+_CONTAINER_PREFIX = (
+    r"(?:[ \t]{0,3}(?:>[ \t]{0,3})+|[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+)*"
+)
+_FENCE_LINE = re.compile(r"^" + _CONTAINER_PREFIX + r"[ \t]{0,3}(`{3,}|~{3,})(.*)$")
 _FOLLOWED_TEMPLATE = r"\A" + _EXCLUSION_GAP + r"(?:%s)(?![\w'])"
+
+# Inline suppression directives. The whole line must be the comment.
+FILE_DIRECTIVE_MAX_LINE = 10
+_DIRECTIVE_HEAD = re.compile(
+    r"^﻿?[ \t]*(?P<opener><!--|#|//)[ \t]*"
+    r"anti-slop-ignore-(?P<scope>next-line|file)(?![\w-])(?P<rest>.*)$"
+)
+_DIRECTIVE_BODY = re.compile(r"^[ \t]+(?P<rule>\S+)[ \t]+--[ \t]+(?P<reason>\S.*?)[ \t]*$")
 
 
 class RegistryError(ValueError):
@@ -110,6 +125,37 @@ class Finding:
             "fix": self.fix,
             "excerpt": self.excerpt,
         }
+
+
+@dataclass(frozen=True)
+class Suppression:
+    """A valid inline directive. ``target_line`` is None for file-wide scope."""
+
+    rule_id: str
+    scope: str
+    directive_line: int
+    target_line: int | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class DirectiveProblem:
+    line: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class SuppressionUse:
+    """How one directive was exercised by a file's findings.
+
+    ``matched_findings`` counts the findings credited to this directive; a
+    more specific directive can take credit for a finding this one also
+    matched, which is why ``used`` is tracked separately.
+    """
+
+    suppression: Suppression
+    matched_findings: int
+    used: bool
 
 
 def _require_text(raw: dict[str, object], key: str, rule_id: str) -> str:
@@ -195,14 +241,21 @@ def _compile_rule(raw: object, index: int) -> Rule:
         raise RegistryError(f"rules[{index}] must be an object")
 
     rule_id = _require_text(raw, "id", f"rules[{index}]")
-    unknown_keys = set(raw) - KNOWN_KEYS
+    kind = _require_text(raw, "kind", rule_id)
+    if kind not in VALID_KINDS:
+        raise RegistryError(f"{rule_id}: invalid detector kind {kind!r}")
+
+    # Keys are checked against the detector kind, so a field that is valid for
+    # another kind cannot sit unused in a rule that ignores it.
+    unknown_keys = set(raw) - COMMON_KEYS - KIND_KEYS[kind]
     if unknown_keys:
-        raise RegistryError(f"{rule_id}: unknown keys {sorted(unknown_keys)}")
+        raise RegistryError(
+            f"{rule_id}: keys {sorted(unknown_keys)} are not allowed for a {kind} rule"
+        )
 
     code = _require_text(raw, "code", rule_id)
     impact = _require_text(raw, "impact", rule_id)
     decision = _require_text(raw, "decision", rule_id)
-    kind = _require_text(raw, "kind", rule_id)
     message = _require_text(raw, "message", rule_id)
     fix = _require_text(raw, "fix", rule_id)
 
@@ -212,15 +265,20 @@ def _compile_rule(raw: object, index: int) -> Rule:
         raise RegistryError(f"{rule_id}: invalid impact {impact!r}")
     if decision not in VALID_DECISIONS:
         raise RegistryError(f"{rule_id}: invalid decision {decision!r}")
-    if kind not in VALID_KINDS:
-        raise RegistryError(f"{rule_id}: invalid detector kind {kind!r}")
 
     raw_scopes = raw.get("scopes")
     if not isinstance(raw_scopes, list) or not raw_scopes:
         raise RegistryError(f"{rule_id}: scopes must be a non-empty list")
+    # Validate every item before hashing: an unhashable entry such as a nested
+    # list would otherwise raise TypeError instead of RegistryError.
+    for scope in raw_scopes:
+        if not isinstance(scope, str):
+            raise RegistryError(f"{rule_id}: scopes must contain only strings")
+        if scope not in VALID_SCOPES:
+            raise RegistryError(
+                f"{rule_id}: unknown scope {scope!r}; expected one of {sorted(VALID_SCOPES)}"
+            )
     scopes = frozenset(raw_scopes)
-    if not all(isinstance(scope, str) for scope in scopes) or not scopes <= VALID_SCOPES:
-        raise RegistryError(f"{rule_id}: invalid scopes")
 
     pattern = None
     filenames: tuple[str, ...] = ()
@@ -244,9 +302,6 @@ def _compile_rule(raw: object, index: int) -> Rule:
         if not all(isinstance(name, str) and name for name in raw_filenames):
             raise RegistryError(f"{rule_id}: filenames must contain non-empty strings")
         filenames = tuple(raw_filenames)
-        for key in ("unless_preceded_by", "unless_followed_by"):
-            if key in raw:
-                raise RegistryError(f"{rule_id}: {key} is not allowed for filename rules")
 
     return Rule(
         rule_id=rule_id,
@@ -303,7 +358,7 @@ def mask_markdown_fences(text: str) -> str:
 
     for line in text.splitlines(keepends=True):
         candidate = line.rstrip("\r\n")
-        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", candidate)
+        match = _FENCE_LINE.match(candidate)
         if fence_char:
             output.append(_blank_line(line))
             if match:
@@ -410,6 +465,7 @@ def _regex_findings(
     starts: Sequence[int],
     path: str,
     seen: set[tuple[str, int]],
+    skipped: frozenset[int],
 ) -> list[Finding]:
     assert rule.pattern is not None
     findings: list[Finding] = []
@@ -427,6 +483,8 @@ def _regex_findings(
             continue
         if excluded_by_context(rule, line, local_start, local_end):
             continue
+        if line_number in skipped:
+            continue
         key = (rule.rule_id, line_number)
         if key in seen:
             continue
@@ -442,6 +500,7 @@ def _sequence_findings(
     starts: Sequence[int],
     path: str,
     seen: set[tuple[str, int]],
+    skipped: frozenset[int],
 ) -> list[Finding]:
     """Report one finding per run of at least ``min_consecutive`` matching lines."""
     assert rule.pattern is not None
@@ -455,7 +514,7 @@ def _sequence_findings(
         if run_start is not None and run_length >= rule.min_consecutive:
             line_number = run_start + 1
             key = (rule.rule_id, line_number)
-            if key not in seen:
+            if line_number not in skipped and key not in seen:
                 seen.add(key)
                 line = original_lines[run_start].rstrip("\r")
                 findings.append(_finding(rule, path, line_number, _excerpt(line)))
@@ -488,13 +547,16 @@ def scan_text(
     scope: str,
     markdown: bool,
     rules: Sequence[Rule] | None = None,
+    skip_lines: Collection[int] = (),
 ) -> list[Finding]:
+    """Run text rules for ``scope``. Lines in ``skip_lines`` never produce findings."""
     if scope not in VALID_SCOPES:
         raise ValueError(f"invalid scan scope: {scope}")
 
     active_rules = rules or load_rules()
     searchable = mask_markdown_fences(text) if markdown else text
     starts = _line_starts(text)
+    skipped = frozenset(skip_lines)
     findings: list[Finding] = []
     seen: set[tuple[str, int]] = set()
 
@@ -502,9 +564,13 @@ def scan_text(
         if scope not in rule.scopes or rule.pattern is None:
             continue
         if rule.kind == "regex":
-            findings.extend(_regex_findings(rule, text, searchable, starts, path, seen))
+            findings.extend(
+                _regex_findings(rule, text, searchable, starts, path, seen, skipped)
+            )
         elif rule.kind == "sequence":
-            findings.extend(_sequence_findings(rule, text, searchable, starts, path, seen))
+            findings.extend(
+                _sequence_findings(rule, text, searchable, starts, path, seen, skipped)
+            )
 
     return sort_findings(findings)
 
@@ -522,6 +588,141 @@ def filename_findings(
         for rule in active_rules
         if rule.kind == "filename" and scope in rule.scopes and filename in rule.filenames
     )
+
+
+def parse_directives(
+    text: str,
+    rules: Sequence[Rule],
+    *,
+    markdown: bool,
+) -> tuple[list[Suppression], list[DirectiveProblem]]:
+    """Parse whole-line ``anti-slop-ignore-*`` comments.
+
+    Accepted forms, each on a line of its own (leading whitespace allowed),
+    written as an HTML comment, a ``#`` comment, or a ``//`` comment:
+
+        `<!-- anti-slop-ignore-next-line RULE_ID -- reason -->`
+        `# anti-slop-ignore-file RULE_ID -- reason`
+        `// anti-slop-ignore-next-line RULE_ID -- reason`
+
+    Directives inside Markdown fences are not recognized when ``markdown`` is
+    true. Invalid directives are reported as problems and suppress nothing.
+    """
+    known = {rule.rule_id for rule in rules}
+    searchable = mask_markdown_fences(text) if markdown else text
+    line_count = len(text.splitlines())
+    suppressions: list[Suppression] = []
+    problems: list[DirectiveProblem] = []
+
+    for index, raw in enumerate(searchable.split("\n")):
+        line_number = index + 1
+        head = _DIRECTIVE_HEAD.match(raw.rstrip("\r"))
+        if head is None:
+            continue
+        rest = head.group("rest")
+        if head.group("opener") == "<!--":
+            closer = rest.find("-->")
+            if closer < 0 or rest[closer + 3 :].strip():
+                problems.append(
+                    DirectiveProblem(
+                        line_number,
+                        "HTML comment directive must be the whole line and close with --> at its end",
+                    )
+                )
+                continue
+            rest = rest[:closer]
+        body = _DIRECTIVE_BODY.match(rest)
+        if body is None:
+            problems.append(
+                DirectiveProblem(
+                    line_number, "expected 'anti-slop-ignore-<scope> <RULE_ID> -- <reason>'"
+                )
+            )
+            continue
+        rule_id = body.group("rule")
+        if rule_id not in known:
+            problems.append(DirectiveProblem(line_number, f"unknown rule id {rule_id!r}"))
+            continue
+        reason = body.group("reason")
+        if head.group("scope") == "file":
+            if line_number > FILE_DIRECTIVE_MAX_LINE:
+                problems.append(
+                    DirectiveProblem(
+                        line_number,
+                        "anti-slop-ignore-file must appear within the first "
+                        f"{FILE_DIRECTIVE_MAX_LINE} lines",
+                    )
+                )
+                continue
+            suppressions.append(Suppression(rule_id, "file", line_number, None, reason))
+        else:
+            target = line_number + 1
+            if target > line_count:
+                problems.append(
+                    DirectiveProblem(line_number, "anti-slop-ignore-next-line has no following line")
+                )
+                continue
+            suppressions.append(Suppression(rule_id, "next-line", line_number, target, reason))
+
+    return suppressions, problems
+
+
+def _matching_suppressions(
+    finding: Finding, suppressions: Sequence[Suppression]
+) -> list[Suppression]:
+    return [
+        item
+        for item in suppressions
+        if item.rule_id == finding.rule_id
+        and (item.scope == "file" or item.target_line == finding.line)
+    ]
+
+
+def suppression_report(
+    findings: Iterable[Finding],
+    suppressions: Sequence[Suppression],
+) -> tuple[list[Finding], list[Finding], list[SuppressionUse]]:
+    """Split findings and record how each directive was exercised.
+
+    A finding matched by several directives is credited to the most specific
+    one: a next-line directive outranks a file directive, and ties go to the
+    lowest directive line. Every directive that matched the finding is still
+    marked used.
+    """
+    order = {id(item): index for index, item in enumerate(suppressions)}
+    credited = {id(item): 0 for item in suppressions}
+    matched_any = {id(item): False for item in suppressions}
+    active: list[Finding] = []
+    suppressed: list[Finding] = []
+
+    for finding in findings:
+        matches = _matching_suppressions(finding, suppressions)
+        if not matches:
+            active.append(finding)
+            continue
+        suppressed.append(finding)
+        for item in matches:
+            matched_any[id(item)] = True
+        winner = min(
+            matches,
+            key=lambda item: (0 if item.scope == "next-line" else 1, item.directive_line, order[id(item)]),
+        )
+        credited[id(winner)] += 1
+
+    usage = [
+        SuppressionUse(item, credited[id(item)], matched_any[id(item)])
+        for item in suppressions
+    ]
+    return sort_findings(active), sort_findings(suppressed), usage
+
+
+def apply_suppressions(
+    findings: Iterable[Finding],
+    suppressions: Sequence[Suppression],
+) -> tuple[list[Finding], list[Finding]]:
+    """Split findings into (active, suppressed) using exact rule ids only."""
+    active, suppressed, _ = suppression_report(findings, suppressions)
+    return active, suppressed
 
 
 def _finding(rule: Rule, path: str, line: int, excerpt: str) -> Finding:
