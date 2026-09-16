@@ -25,7 +25,7 @@ FLAG_VALUES = {
 }
 SEQUENCE_FLAGS = {"IGNORECASE"}
 DECISION_ORDER = {"BLOCK": 0, "TRIM": 1, "FLAG": 2}
-KNOWN_KEYS = {
+COMMON_KEYS = {
     "id",
     "code",
     "impact",
@@ -34,20 +34,27 @@ KNOWN_KEYS = {
     "kind",
     "message",
     "fix",
-    "pattern",
-    "line_pattern",
-    "flags",
-    "filenames",
-    "min_consecutive",
-    "unless_preceded_by",
-    "unless_followed_by",
     "notes",
+}
+EXCLUSION_KEYS = {"unless_preceded_by", "unless_followed_by"}
+KIND_KEYS = {
+    "filename": {"filenames"},
+    "regex": {"pattern", "flags"} | EXCLUSION_KEYS,
+    "sequence": {"line_pattern", "flags", "min_consecutive"} | EXCLUSION_KEYS,
 }
 
 # Whitespace and Markdown emphasis markers allowed between an exclusion word
 # and the matched text on the same line.
 _EXCLUSION_GAP = r"[\s*_`~]*"
 _PRECEDED_TEMPLATE = r"(?<![\w'])(?:%s)" + _EXCLUSION_GAP + r"\Z"
+
+# A code fence still opens and closes inside the containers a Markdown file
+# commonly wraps it in: blockquotes, bullet items and ordered items. This is a
+# bounded prefix, not a CommonMark parser.
+_CONTAINER_PREFIX = (
+    r"(?:[ \t]{0,3}(?:>[ \t]{0,3})+|[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+)*"
+)
+_FENCE_LINE = re.compile(r"^" + _CONTAINER_PREFIX + r"[ \t]{0,3}(`{3,}|~{3,})(.*)$")
 _FOLLOWED_TEMPLATE = r"\A" + _EXCLUSION_GAP + r"(?:%s)(?![\w'])"
 
 # Inline suppression directives. The whole line must be the comment.
@@ -220,14 +227,21 @@ def _compile_rule(raw: object, index: int) -> Rule:
         raise RegistryError(f"rules[{index}] must be an object")
 
     rule_id = _require_text(raw, "id", f"rules[{index}]")
-    unknown_keys = set(raw) - KNOWN_KEYS
+    kind = _require_text(raw, "kind", rule_id)
+    if kind not in VALID_KINDS:
+        raise RegistryError(f"{rule_id}: invalid detector kind {kind!r}")
+
+    # Keys are checked against the detector kind, so a field that is valid for
+    # another kind cannot sit unused in a rule that ignores it.
+    unknown_keys = set(raw) - COMMON_KEYS - KIND_KEYS[kind]
     if unknown_keys:
-        raise RegistryError(f"{rule_id}: unknown keys {sorted(unknown_keys)}")
+        raise RegistryError(
+            f"{rule_id}: keys {sorted(unknown_keys)} are not allowed for a {kind} rule"
+        )
 
     code = _require_text(raw, "code", rule_id)
     impact = _require_text(raw, "impact", rule_id)
     decision = _require_text(raw, "decision", rule_id)
-    kind = _require_text(raw, "kind", rule_id)
     message = _require_text(raw, "message", rule_id)
     fix = _require_text(raw, "fix", rule_id)
 
@@ -237,15 +251,20 @@ def _compile_rule(raw: object, index: int) -> Rule:
         raise RegistryError(f"{rule_id}: invalid impact {impact!r}")
     if decision not in VALID_DECISIONS:
         raise RegistryError(f"{rule_id}: invalid decision {decision!r}")
-    if kind not in VALID_KINDS:
-        raise RegistryError(f"{rule_id}: invalid detector kind {kind!r}")
 
     raw_scopes = raw.get("scopes")
     if not isinstance(raw_scopes, list) or not raw_scopes:
         raise RegistryError(f"{rule_id}: scopes must be a non-empty list")
+    # Validate every item before hashing: an unhashable entry such as a nested
+    # list would otherwise raise TypeError instead of RegistryError.
+    for scope in raw_scopes:
+        if not isinstance(scope, str):
+            raise RegistryError(f"{rule_id}: scopes must contain only strings")
+        if scope not in VALID_SCOPES:
+            raise RegistryError(
+                f"{rule_id}: unknown scope {scope!r}; expected one of {sorted(VALID_SCOPES)}"
+            )
     scopes = frozenset(raw_scopes)
-    if not all(isinstance(scope, str) for scope in scopes) or not scopes <= VALID_SCOPES:
-        raise RegistryError(f"{rule_id}: invalid scopes")
 
     pattern = None
     filenames: tuple[str, ...] = ()
@@ -269,9 +288,6 @@ def _compile_rule(raw: object, index: int) -> Rule:
         if not all(isinstance(name, str) and name for name in raw_filenames):
             raise RegistryError(f"{rule_id}: filenames must contain non-empty strings")
         filenames = tuple(raw_filenames)
-        for key in ("unless_preceded_by", "unless_followed_by"):
-            if key in raw:
-                raise RegistryError(f"{rule_id}: {key} is not allowed for filename rules")
 
     return Rule(
         rule_id=rule_id,
@@ -328,7 +344,7 @@ def mask_markdown_fences(text: str) -> str:
 
     for line in text.splitlines(keepends=True):
         candidate = line.rstrip("\r\n")
-        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", candidate)
+        match = _FENCE_LINE.match(candidate)
         if fence_char:
             output.append(_blank_line(line))
             if match:

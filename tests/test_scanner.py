@@ -405,6 +405,24 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(failed.returncode, 1)
             self.assertIn("Invalid anti-slop rule registry", failed.stderr)
 
+    def test_structurally_invalid_registries_exit_1_without_a_traceback(self):
+        broken = {
+            "bad scopes": {"schema_version": 1, "rules": [dict(ZEBRA_RULE, scopes=[["repository"]])]},
+            "kind mismatch": {"schema_version": 1, "rules": [dict(ZEBRA_RULE, filenames=["X.md"])]},
+            "bad schema version": {"schema_version": 9, "rules": [ZEBRA_RULE]},
+            "duplicate ids": {"schema_version": 1, "rules": [ZEBRA_RULE, ZEBRA_RULE]},
+            "bad regex": {"schema_version": 1, "rules": [dict(ZEBRA_RULE, pattern="(")]},
+        }
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
+            write(tmp, "doc.md", "A zebra.\n")
+            for label, payload in broken.items():
+                with self.subTest(label=label):
+                    registry = write(home, "rules.json", json.dumps(payload))
+                    proc = run_scanner(tmp, "--rules", str(registry))
+                    self.assertEqual(proc.returncode, 1, proc.stderr)
+                    self.assertIn("Invalid anti-slop rule registry", proc.stderr)
+                    self.assertNotIn("Traceback", proc.stderr)
+
     def test_next_line_directive_suppresses_only_the_target_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(

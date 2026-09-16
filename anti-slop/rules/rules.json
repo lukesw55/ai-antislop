@@ -92,7 +92,7 @@
       "flags": ["IGNORECASE"],
       "unless_preceded_by": [
         "(?:if|when|whenever|until|once|unless|whether|not|never|no|so that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*",
-        "(?:\\A|(?<=[.!?;:()\\[\\]]))[ \\t]*(?:[-*+>#][ \\t]*)*(?:(?:please|first|then|next|also|always|finally)[ \\t]+)*(?:ensure|make sure|verify that|confirm that|check that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*"
+        "(?:(?:\\A|(?<=[.!?;:,()\\[\\]]))[ \\t]*(?:[-*+>#][ \\t]*)*(?:(?:please|first|then|next|also|always|finally)[ \\t]+)*|(?:must|should|shall|need to|needs to|have to|has to)[ \\t]+|\\A[ \\t]*(?:[-*+>#][ \\t]*)*(?:before|after|while|once|when|whenever|until|unless|if)[ \\t]+(?:\\w+[ \\t]+){0,3})(?:ensure|make sure|verify that|confirm that|check that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*"
       ],
       "message": "verification claim needs command or source evidence",
       "fix": "Cite the command and result, or say that verification was not run."
