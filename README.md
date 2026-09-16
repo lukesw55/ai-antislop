@@ -217,7 +217,7 @@ A repository can keep a legitimate match without loosening the rule. Two directi
 
 Only exact rule ids are accepted; there are no wildcards or ranges. Suppression is applied per file before ordering, `--max-findings`, and `--fail-on` thresholds, so a suppressed `BLOCK` no longer fails a gate. Suppressed findings are counted in the JSON v2 summary and in the text summary. The directive line itself is not scanned, so a reason may quote the phrase it justifies.
 
-An invalid directive prints `warning: <path>:<line>: anti-slop directive ignored: <reason>` on `stderr` and suppresses nothing. Causes: unknown rule id, missing reason, an HTML comment without `-->` on the same line, a file directive after line 10, or a next-line directive on the last line. `--quiet` silences these warnings. Directives inside Markdown code fences are treated as examples and ignored. In Markdown, prefer the HTML comment form; a `#` line renders as a heading.
+An invalid directive prints `warning: <path>:<line>: anti-slop directive ignored: <reason>` on `stderr` and suppresses nothing. Causes: unknown rule id, missing reason, an HTML comment whose first `-->` is not at the end of the line, a file directive after line 10, or a next-line directive on the last line. Content before or after the comment on the same line makes it prose, not a directive. `--quiet` silences these warnings. Directives inside Markdown code fences are treated as examples and ignored. In Markdown, prefer the HTML comment form; a `#` line renders as a heading.
 
 The Stop hook never honors directives, so a response cannot dismiss its own review.
 

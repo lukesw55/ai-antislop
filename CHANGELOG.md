@@ -7,15 +7,15 @@
 - The Stop hook's default output is now `systemMessage`, a warning shown to the user that does not make Claude continue. The previous default, `hookSpecificOutput.additionalContext`, continues the conversation according to the Claude Code hooks reference. Set `ANTI_SLOP_HOOK_MODE=context` to keep the previous behavior or `ANTI_SLOP_HOOK_MODE=block` for a blocking decision. `ANTI_SLOP_HOOK_BLOCK=1` still selects `block`. The `warn` text no longer asks the reader to revise before stopping, because its reader is the user.
 - `S1-label-colon-bullet` is a `sequence` detector: it fires once per run of at least three consecutive label-colon bullets instead of on every bullet. Its id, code, impact, and decision are unchanged.
 - Regex rules anchored at line start use `[ \t]` for indentation and accept CRLF line ends, and the engine attributes a match to its first non-blank character. Previously a match that began on a blank line was reported on that blank line with an empty excerpt, and the content line was never reported.
-- `S2-verification-claim`, `D2-maturity-claim`, and `S3-attention-bait` declare same-line exclusions for conditionals and instructions ("if tests pass", "if all tests pass", "when the build passes", "ensure all tests pass"), explicit negations ("not production-ready", "isn't production-ready"), and the phrases "magic number" and "10x multiplier". The S3 exception is scoped to those two terms, so "shocking numbers" is still reported. Statements such as "production-ready in Chromium 126" remain findings by design; a version number is not evidence.
+- `S2-verification-claim`, `D2-maturity-claim`, and `S3-attention-bait` declare same-line exclusions for conditionals and instructions ("if tests pass", "if all tests pass", "when the build passes", "ensure all tests pass"); the imperative openers count only at clause start, so "I confirm that all tests pass" is still reported, explicit negations ("not production-ready", "isn't production-ready"), and the phrases "magic number" and "10x multiplier". The S3 exception is scoped to those two terms, so "shocking numbers" is still reported. Statements such as "production-ready in Chromium 126" remain findings by design; a version number is not evidence.
 - The scanner's text summary ends with `suppressed=N`. JSON v1 is unchanged. JSON v2 adds `summary.suppressed_findings`; `total_findings` keeps counting active findings.
 
 ### Added
 
 - Rule fields `unless_preceded_by` and `unless_followed_by`, as a list that applies to every alternative of the pattern or as an object keyed by the matched text that applies to one alternative. Unknown registry keys are rejected when the registry loads.
-- Inline suppressions in the scanner: `anti-slop-ignore-next-line RULE_ID -- reason` and `anti-slop-ignore-file RULE_ID -- reason`, as whole-line HTML, `#`, or `//` comments. The file form must appear within the first 10 lines. Invalid directives are reported on `stderr` and suppress nothing. The Stop hook does not honor directives.
+- Inline suppressions in the scanner: `anti-slop-ignore-next-line RULE_ID -- reason` and `anti-slop-ignore-file RULE_ID -- reason`, as whole-line HTML, `#`, or `//` comments; for the HTML form the first `-->` must end the line, so a directive followed by prose is not a directive. The file form must appear within the first 10 lines. Invalid directives are reported on `stderr` and suppress nothing. The Stop hook does not honor directives.
 - `--rules PATH` on the scanner and `ANTI_SLOP_RULES` on the hook load a complete alternative registry without merging.
-- `anti-slop/evals/rule-corpus.json`: 59 deterministic cases with exact rule, line, and decision expectations, run by `tests/test_eval_corpus.py`, which also requires a positive and a negative case for every rule.
+- `anti-slop/evals/rule-corpus.json`: 70 deterministic cases with exact rule, line, and decision expectations, run by `tests/test_eval_corpus.py`, which also requires a positive and a negative case for every rule.
 - Response patterns C10 to C13 (portable sentences, unverifiable attribution, synonym cycling, artificial kicker) and a Preserve section in `anti-slop/references/response-patterns.md`.
 - README sections for the one-command install, the registry format, inline suppressions, hook modes, and limitations.
 
@@ -36,4 +36,4 @@ Hook modes exercised on 2026-09-15 in Claude Code 2.1.272 with a project-level S
 
 Installation exercised on 2026-09-15 with `npx skills add <clone> --skill anti-slop -a claude-code -y` (skills CLI 1.5.26) in an empty project: the whole `anti-slop/` tree was copied to `.claude/skills/anti-slop/`, the installed scanner loaded its registry, and no hook was enabled.
 
-Unit suite: 84 tests on Python 3.11.15 locally; CI covers Python 3.9, 3.11, and 3.13 on Ubuntu and 3.11 on Windows.
+Unit suite: 87 tests on Python 3.11.15 locally; CI covers Python 3.9, 3.11, and 3.13 on Ubuntu and 3.11 on Windows.
