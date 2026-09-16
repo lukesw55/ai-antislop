@@ -66,7 +66,7 @@ The reference catalog contains 44 semantic patterns. Agents use these patterns w
 | Repository contamination | D1-D8 | 8 |
 | Multimodal material | M1-M7 | 7 |
 
-The executable registry contains 16 deterministic detectors: 5 filename rules and 11 regex rules. [`anti-slop/rules/rules.json`](anti-slop/rules/rules.json) is the source of truth for those detectors. [`anti-slop/lib/anti_slop_engine.py`](anti-slop/lib/anti_slop_engine.py) loads the registry and is shared by the scanner and hook.
+The executable registry contains 16 deterministic detectors: 5 filename rules, 10 regex rules, and 1 sequence rule that fires only on runs of at least three matching lines. [`anti-slop/rules/rules.json`](anti-slop/rules/rules.json) is the source of truth for those detectors. [`anti-slop/lib/anti_slop_engine.py`](anti-slop/lib/anti_slop_engine.py) loads the registry and is shared by the scanner and hook.
 
 A deterministic match is a candidate finding. Semantic claims, behavior preservation, and false positives still require context. Detailed guidance lives in [`anti-slop/references/`](anti-slop/references/) and is loaded only when needed.
 
