@@ -1,6 +1,6 @@
 ---
 name: anti-slop
-description: Detect, classify, gate, and rewrite AI-shaped repository output without losing behavior or evidence. Use when writing or reviewing code, documentation, README text, PRs, issues, changelogs, generated artifacts, media metadata, or assistant responses that may affect a repository, especially when the user asks to remove AI slop, boilerplate, generic phrasing, unsupported claims, fake polish, or unnecessary structure.
+description: Use when the user explicitly asks to remove AI slop or boilerplate, audit unsupported claims or repository contamination, or review AI-generated repository output in Gate, Sweep, or Diff mode. Covers README text, PR and issue descriptions, changelogs, generated artifacts, media metadata, and assistant responses. Do not use for routine coding, ordinary proofreading, raw JSON or log passthrough, or repository work where slop, evidence, contamination, or AI-shaped output is not part of the task.
 ---
 
 # Anti-slop

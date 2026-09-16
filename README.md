@@ -114,7 +114,7 @@ Every rule has `id`, `code`, `impact`, `decision`, `scopes`, `kind`, `message`, 
 
 `regex` and `sequence` rules may also declare `unless_preceded_by` and `unless_followed_by`. Each field is either a list of regex fragments, which applies to every alternative of the rule's pattern, or an object whose keys are regexes matched against the whole matched text and whose values are such lists, so an exclusion can target one alternative. Fragments are compiled case-insensitively and checked against the text immediately before or after the match on the same line; Markdown emphasis markers in between are ignored. The registry uses these fields to skip conditionals and instructions such as "if all tests pass" or "ensure the build passes", explicit negations such as "not production-ready", and the phrases "magic number" and "10x multiplier" without affecting the other attention-bait terms. Unknown keys are rejected when the registry loads.
 
-Matches inside quotes, backticks, and Markdown code fences are never reported. A pattern anchored at line start should use `[ \t]` for indentation and `\r?$` before an end anchor so CRLF files report the right line; the engine also attributes a match to its first non-blank character.
+Matches inside quotes, backticks, and Markdown code fences are never reported. A fence is recognized after the containers a Markdown file commonly wraps it in: blockquote markers, bullet items, ordered items, and their nesting. A pattern anchored at line start should use `[ \t]` for indentation and `\r?$` before an end anchor so CRLF files report the right line; the engine also attributes a match to its first non-blank character.
 
 ## Static scanner
 
@@ -126,6 +126,7 @@ usage: scan_repo_slop.py [-h] [--json | --json-v2]
                          [--max-file-bytes MAX_FILE_BYTES] [--fail-on-block]
                          [--fail-on {block,trim,flag}] [--summary] [--quiet]
                          [--exclude GLOB] [--no-default-excludes]
+                         [--fail-on-unused-suppression] [--fail-on-incomplete]
                          [--rules PATH]
                          [path]
 
@@ -152,6 +153,10 @@ options:
   --no-default-excludes
                         Also scan default-excluded paths: .agents/*,
                         .claude/*, .codex/*, .cursor/*
+  --fail-on-unused-suppression
+                        Exit 2 when a valid suppression directive matched no
+                        finding
+  --fail-on-incomplete  Exit 3 when any file's content could not be scanned
   --rules PATH          Load this complete rule registry instead of the
                         bundled rules.json
 ```
@@ -175,11 +180,17 @@ Output contracts:
 | `--json` | Stable v1 list with `path`, `line`, `code`, `severity`, `message`, and `excerpt` |
 | `--json-v2` | Object with `schema_version`, detailed findings, truncation state, omitted count, and scan summary |
 
-V2 findings add `rule_id`, `impact`, `decision`, and `fix`. Its summary reports files considered, files scanned, files skipped for size, unreadable files, total and returned findings, suppressed findings, and counts by decision. `total_findings` counts active findings only.
+V2 findings add `rule_id`, `impact`, `decision`, and `fix`. Its summary reports files considered, files scanned, files skipped for size, unreadable files, symlinks not followed, paths that resolved outside the scan root, the total of those four as `incomplete_files`, `scan_complete`, total and returned findings, suppressed findings, and counts by decision. `total_findings` counts active findings only. The v2 object also carries a `suppressions` array, described under [Inline suppressions](#inline-suppressions).
 
 The default content limit is 4 MiB per file. Files above the limit still receive filename checks, but their content is not read. `--max-findings` limits reported findings after deterministic ordering; omitted findings are signaled in `stderr` and in JSON v2. `--quiet` suppresses human output and notices, while an explicitly selected JSON format is still written to `stdout`.
 
 The default exclusions are `.agents/`, `.claude/`, `.codex/`, and `.cursor/`. Use `--no-default-excludes` to scan synchronized copies. In a Git worktree, the scanner asks Git for tracked and untracked non-ignored files. Without Git, it walks recognized text files.
+
+### Coverage and symlinks
+
+A symlink's target is never read, whatever it points at, because an excerpt would republish that content. Filename rules still apply to the link's own name, and the link is recorded as unread coverage. The same applies to any path whose resolved location falls outside the scan root. The walk fallback does not descend into symlinked directories, and a symlinked directory passed as the scan target is rejected with exit 1 rather than followed.
+
+A file that is too large, unreadable, a symlink, or outside the root leaves the scan incomplete. By default that is tolerated, which suits exploratory runs. Pass `--fail-on-incomplete` to make it fail, and read `scan_complete` and `incomplete_files` in JSON v2 or `complete=yes|no` in the text summary. `--quiet` hides the notices but never changes the exit code.
 
 `--rules PATH` replaces the bundled registry with a complete alternative file in the same format. There is no merging. A missing or invalid registry exits 1.
 
@@ -197,9 +208,12 @@ Scanner exit codes:
 
 | Code | Meaning |
 |---:|---|
-| 0 | Scan completed and the requested threshold was not met |
+| 0 | Scan completed and no requested gate was met |
 | 1 | Input path or executable registry could not be used |
-| 2 | Requested threshold was met; argument parsing also uses 2 for invalid CLI input |
+| 2 | A finding threshold was met, or a suppression went unused under `--fail-on-unused-suppression`; argument parsing also uses 2 for invalid CLI input |
+| 3 | Coverage was incomplete under `--fail-on-incomplete` |
+
+When several apply, the first match wins: an invalid path or registry returns 1, then incomplete coverage returns 3, then a finding or suppression gate returns 2, otherwise 0. Incomplete coverage outranks the finding gate because a partial scan cannot support a clean verdict.
 
 ## Inline suppressions
 
@@ -217,6 +231,8 @@ A repository can keep a legitimate match without loosening the rule. Two directi
 
 Only exact rule ids are accepted; there are no wildcards or ranges. Suppression is applied per file before ordering, `--max-findings`, and `--fail-on` thresholds, so a suppressed `BLOCK` no longer fails a gate. Suppressed findings are counted in the JSON v2 summary and in the text summary. The directive line itself is not scanned, so a reason may quote the phrase it justifies.
 
+JSON v2 reports every valid directive in a `suppressions` array with its path, rule id, scope, directive line, target line, reason, the number of findings credited to it, and whether it matched nothing. When several directives match one finding, the most specific is credited: a next-line directive outranks a file directive, and ties go to the lowest directive line. A directive that matched a finding another directive was credited for is still counted as used, so it is not reported as stale. Pass `--fail-on-unused-suppression` to exit 2 when a valid directive matched no finding, which catches directives left behind after the text they covered was rewritten.
+
 An invalid directive prints `warning: <path>:<line>: anti-slop directive ignored: <reason>` on `stderr` and suppresses nothing. Causes: unknown rule id, missing reason, an HTML comment whose first `-->` is not at the end of the line, a file directive after line 10, or a next-line directive on the last line. Content before or after the comment on the same line makes it prose, not a directive. `--quiet` silences these warnings. Directives inside Markdown code fences are treated as examples and ignored. In Markdown, prefer the HTML comment form; a `#` line renders as a heading.
 
 The Stop hook never honors directives, so a response cannot dismiss its own review.
@@ -233,7 +249,15 @@ The Stop hook never honors directives, so a response cannot dismiss its own revi
 | `context` | `hookSpecificOutput.additionalContext` | Claude receives the findings as hook feedback and continues the turn to act on them. |
 | `block` | `decision: "block"` with `reason` | Claude receives the findings as a blocking reason and continues the turn. |
 
-`context` and `block` follow the same loop protections described in the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks): the hook stays silent when `stop_hook_active` is set, and Claude Code caps consecutive continuations. `ANTI_SLOP_HOOK_BLOCK=1` is kept as an alias for `block`; a valid `ANTI_SLOP_HOOK_MODE` takes precedence over it. `ANTI_SLOP_RULES` points the hook at an alternative registry; an unreadable registry makes the hook exit silently.
+`context` and `block` follow the same loop protections described in the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks): the hook stays silent when `stop_hook_active` is set, and Claude Code caps consecutive continuations. `ANTI_SLOP_HOOK_BLOCK=1` is kept as an alias for `block`; a valid `ANTI_SLOP_HOOK_MODE` takes precedence over it. `ANTI_SLOP_RULES` points the hook at an alternative registry; an unreadable registry makes the hook exit silently. Set `ANTI_SLOP_DEBUG=1` to print one diagnostic line to `stderr` when that happens; the hook still exits 0, never blocks on an internal failure, and never sends an internal error to the model as feedback.
+
+Validate the configured registry without running a turn:
+
+```bash
+python3 anti-slop/hooks/anti-slop-stop.py --check
+```
+
+The check loads the registry, requires at least one rule in the response scope, prints a one-line summary and exits 0. An invalid or missing registry, or one with no response-scope rule, exits 1 with the reason. It never reads standard input.
 
 The three modes were exercised in Claude Code 2.1.272 on 2026-09-15; the record is in [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -262,6 +286,7 @@ For a user install, point the same command at the user-scoped hook path, for exa
 ## Limitations
 
 - A mechanical `BLOCK` is the configured policy for a pattern, not proof that the text is false. Review candidates before acting on them.
+- Text inside single quotes, double quotes, or backticks is treated as a mention rather than a claim. That keeps catalogs, banned-word lists, and examples quiet, and it also hides a real claim someone wrote inside quotes. Semantic review still has to read the file.
 - The executable detectors match English phrasing. The Portuguese triggers in the response reference say when to apply the skill; they do not extend detection to Portuguese text.
 - A list-form `unless_*` exclusion applies to every alternative in a rule's pattern. Use the object form to target one alternative.
 - Files above `--max-file-bytes` are not read, so file-level directives in them are not honored; their filename findings still apply.
