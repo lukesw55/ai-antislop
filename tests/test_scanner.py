@@ -244,6 +244,37 @@ class ScannerTests(unittest.TestCase):
         self.assertNotIn("directive ignored", quiet.stderr)
         self.assertEqual(quiet.stdout, proc.stdout)
 
+    def test_html_directive_must_own_the_whole_line(self):
+        lines = [
+            "<!-- anti-slop-ignore-next-line S3-attention-bait -- note --> All tests passed. <!-- -->",
+            "<!-- anti-slop-ignore-file S3-attention-bait -- note --> All tests passed.",
+            "All tests passed. <!-- anti-slop-ignore-file S2-verification-claim -- trailing -->",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            write(tmp, "doc.md", "\n".join(lines) + "\n")
+            proc = run_scanner(tmp, "--json-v2")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(
+            [(f["rule_id"], f["line"]) for f in payload["findings"]],
+            [("S2-verification-claim", 1), ("S2-verification-claim", 2), ("S2-verification-claim", 3)],
+        )
+        self.assertEqual(payload["summary"]["suppressed_findings"], 0)
+        self.assertEqual(proc.stderr.count("must be the whole line"), 2)
+
+    def test_html_directive_tolerates_trailing_whitespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(
+                tmp,
+                "doc.md",
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- quotes the policy -->   \n"
+                "All tests passed.\n",
+            )
+            proc = run_scanner(tmp, "--json-v2")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["findings"], [])
+        self.assertEqual(payload["summary"]["suppressed_findings"], 1)
+        self.assertEqual(proc.stderr, "")
+
     def test_directive_inside_fence_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(

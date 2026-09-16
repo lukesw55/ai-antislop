@@ -91,7 +91,8 @@
       "pattern": "\\b(tests? pass(?:ed)?|build pass(?:ed|es)?|validated successfully|verified successfully|all checks pass(?:ed)?)\\b",
       "flags": ["IGNORECASE"],
       "unless_preceded_by": [
-        "(?:if|when|whenever|until|once|unless|whether|not|never|no|ensure|make sure|so that|verify that|confirm that|check that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*"
+        "(?:if|when|whenever|until|once|unless|whether|not|never|no|so that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*",
+        "(?:\\A|(?<=[.!?;:()\\[\\]]))[ \\t]*(?:[-*+>#][ \\t]*)*(?:(?:please|first|then|next|also|always|finally)[ \\t]+)*(?:ensure|make sure|verify that|confirm that|check that)(?:[\\s*_`~]+(?:all|the|these|those|every|any|each|both|some|that|your|our|its|my|their))*"
       ],
       "message": "verification claim needs command or source evidence",
       "fix": "Cite the command and result, or say that verification was not run."
