@@ -1,5 +1,6 @@
 """Tests for scripts/scan_repo_slop.py — run via: python3 -m unittest discover tests"""
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,221 @@ def write(directory, name, text):
     path = Path(directory, name)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def require_symlinks(test, directory):
+    """Skip the caller when the platform or account cannot create symlinks."""
+    target = Path(directory, "probe-target.txt")
+    target.write_text("probe", encoding="utf-8")
+    link = Path(directory, "probe-link.txt")
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        test.skipTest("symlinks are not supported in this environment")
+    link.unlink()
+    target.unlink()
+
+
+def git_repo(directory):
+    subprocess.run(["git", "-C", directory, "init", "-q"], check=True, timeout=30)
+
+
+def git_add_all(directory):
+    subprocess.run(
+        ["git", "-C", directory, "add", "-A"], check=True, capture_output=True, timeout=30
+    )
+
+
+class SymlinkSafetyTests(unittest.TestCase):
+    """The scanner must never read through a link, whatever it points at."""
+
+    TRIGGER = "This library is production-ready and battle-tested.\n"
+
+    def build(self, root, outside):
+        require_symlinks(self, root)
+        write(outside, "secret.md", self.TRIGGER)
+        Path(root, "link.md").symlink_to(Path(outside, "secret.md"))
+        write(root, "README.md", "# tool\n\nInstall with pip.\n")
+
+    def assert_external_content_absent(self, proc, payload):
+        self.assertEqual(payload["findings"], [])
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+        self.assertFalse(payload["summary"]["scan_complete"])
+        self.assertNotIn("production-ready", proc.stdout)
+        self.assertNotIn("battle-tested", proc.stdout)
+
+    def test_tracked_symlink_to_external_file_is_not_read(self):
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            self.build(tmp, outside)
+            git_repo(tmp)
+            git_add_all(tmp)
+            proc = run_scanner(tmp, "--json-v2")
+            gated = run_scanner(tmp, "--json-v2", "--fail-on-incomplete")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assert_external_content_absent(proc, payload)
+        self.assertEqual(gated.returncode, 3, gated.stderr)
+
+    def test_untracked_symlink_is_not_read_by_the_walk_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            self.build(tmp, outside)
+            proc = run_scanner(tmp, "--json-v2")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assert_external_content_absent(proc, payload)
+        self.assertIn("symlink", proc.stderr)
+
+    def test_symlink_to_a_file_inside_the_root_is_still_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            require_symlinks(self, tmp)
+            real = write(tmp, "real.md", self.TRIGGER)
+            Path(tmp, "alias.md").symlink_to(real)
+            proc = run_scanner(tmp, "--json-v2")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(
+            [(f["path"], f["rule_id"]) for f in payload["findings"]],
+            [("real.md", "D2-maturity-claim")],
+        )
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+
+    def test_broken_symlink_is_counted_not_crashed_on(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            require_symlinks(self, tmp)
+            Path(tmp, "dangling.md").symlink_to(Path(tmp, "gone.md"))
+            proc = run_scanner(tmp, "--json-v2")
+            gated = run_scanner(tmp, "--json-v2", "--fail-on-incomplete")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+        self.assertEqual(payload["summary"]["files_unreadable"], 0)
+        self.assertEqual(gated.returncode, 3)
+
+    def test_tracked_broken_symlink_is_counted(self):
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            require_symlinks(self, tmp)
+            Path(tmp, "dangling.md").symlink_to(Path(tmp, "gone.md"))
+            git_repo(tmp)
+            git_add_all(tmp)
+            proc = run_scanner(tmp, "--json-v2")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+
+    def test_symlinked_file_passed_directly_to_the_cli(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            require_symlinks(self, tmp)
+            write(outside, "secret.md", self.TRIGGER)
+            link = Path(tmp, "link.md")
+            link.symlink_to(Path(outside, "secret.md"))
+            proc = run_scanner(str(link), "--json-v2")
+            gated = run_scanner(str(link), "--json-v2", "--fail-on-incomplete")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(payload["findings"], [])
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+        self.assertNotIn("production-ready", proc.stdout)
+        self.assertEqual(gated.returncode, 3)
+
+    def test_symlinked_directory_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            require_symlinks(self, tmp)
+            write(outside, "secret.md", self.TRIGGER)
+            link = Path(tmp, "aliasdir")
+            link.symlink_to(Path(outside), target_is_directory=True)
+            proc = run_scanner(str(link), "--json-v2")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Symlinked directory targets are not supported", proc.stderr)
+        self.assertNotIn("production-ready", proc.stdout)
+
+    def test_filename_rule_applies_to_a_symlink_without_reading_it(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            require_symlinks(self, tmp)
+            write(outside, "target.md", self.TRIGGER)
+            Path(tmp, "SUMMARY.md").symlink_to(Path(outside, "target.md"))
+            proc = run_scanner(tmp, "--json-v2", "--fail-on-block")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(
+            [(f["path"], f["rule_id"], f["line"]) for f in payload["findings"]],
+            [("SUMMARY.md", "D7-summary-file", 1)],
+        )
+        self.assertNotIn("production-ready", proc.stdout)
+        self.assertEqual(payload["summary"]["files_skipped_symlink"], 1)
+
+    def test_path_resolving_outside_the_root_is_refused(self):
+        sys.path.insert(0, str(SCANNER.parent.parent))
+        sys.path.insert(0, str(SCANNER.parent))
+        import scan_repo_slop as scanner
+        from lib.anti_slop_engine import load_rules
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            inside = Path(tmp)
+            stray = write(outside, "stray.md", self.TRIGGER)
+            result = scanner.scan_file(
+                stray, Path(outside), load_rules(), 4 * 1024 * 1024, inside.resolve()
+            )
+        self.assertEqual(result.state, "outside_root")
+        self.assertEqual(result.findings, [])
+
+
+class IncompleteScanTests(unittest.TestCase):
+    def test_complete_scan_passes_the_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(tmp, "README.md", "# tool\n\nInstall with pip.\n")
+            proc = run_scanner(tmp, "--json-v2", "--fail-on-incomplete")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(payload["summary"]["scan_complete"])
+        self.assertEqual(payload["summary"]["incomplete_files"], 0)
+
+    def test_large_file_is_tolerated_by_default_and_gated_by_the_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(tmp, "large.md", "production-ready " + ("x" * 128))
+            tolerant = run_scanner(tmp, "--json-v2", "--max-file-bytes", "16")
+            gated = run_scanner(tmp, "--json-v2", "--max-file-bytes", "16", "--fail-on-incomplete")
+            quiet = run_scanner(
+                tmp, "--max-file-bytes", "16", "--fail-on-incomplete", "--quiet"
+            )
+        payload = json.loads(tolerant.stdout)
+        self.assertEqual(tolerant.returncode, 0, tolerant.stderr)
+        self.assertFalse(payload["summary"]["scan_complete"])
+        self.assertEqual(payload["summary"]["incomplete_files"], 1)
+        self.assertEqual(gated.returncode, 3, gated.stderr)
+        self.assertEqual(quiet.returncode, 3)
+        self.assertEqual(quiet.stderr, "")
+
+    def test_unreadable_file_is_gated_by_the_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write(tmp, "locked.md", "# doc\n")
+            try:
+                path.chmod(0o000)
+            except (OSError, NotImplementedError):
+                self.skipTest("cannot drop read permission here")
+            readable_anyway = os.access(str(path), os.R_OK)
+            try:
+                if readable_anyway:
+                    self.skipTest("this account can read a mode 000 file")
+                proc = run_scanner(tmp, "--json-v2", "--fail-on-incomplete")
+                payload = json.loads(proc.stdout)
+            finally:
+                path.chmod(0o644)
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(payload["summary"]["files_unreadable"], 1)
+        self.assertFalse(payload["summary"]["scan_complete"])
+
+    def test_incomplete_coverage_outranks_a_finding_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(tmp, "claim.md", "This tool is production-ready.\n")
+            write(tmp, "large.md", "filler " + ("x" * 4096))
+            both = run_scanner(
+                tmp, "--max-file-bytes", "64", "--fail-on-block", "--fail-on-incomplete"
+            )
+            gate_only = run_scanner(tmp, "--max-file-bytes", "64", "--fail-on-block")
+        self.assertEqual(both.returncode, 3, both.stderr)
+        self.assertEqual(gate_only.returncode, 2, gate_only.stderr)
 
 
 class ScannerTests(unittest.TestCase):
