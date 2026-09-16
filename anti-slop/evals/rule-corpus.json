@@ -228,6 +228,105 @@
       "must_not_find": ["D2-maturity-claim"]
     },
     {
+      "id": "S2-verification-claim/first-person-confirm-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "I confirm that all tests pass.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S2-verification-claim/first-person-verify-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "I verify that tests pass.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S2-verification-claim/first-person-plural-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "We confirm that the build passes.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S2-verification-claim/first-person-ensure-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "I ensure that all tests pass.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S2-verification-claim/third-person-subject-remains-a-finding",
+      "path": "PR.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "The maintainer confirms that tests pass.\n",
+      "expect": [{"rule_id": "S2-verification-claim", "line": 1, "decision": "BLOCK"}],
+      "must_not_find": ["D2-maturity-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-at-line-start-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Confirm that tests pass before merging.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-verify-that-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Verify that all tests pass before pushing.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-after-sentence-end-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Run lint. Then ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-after-please-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "Please ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-in-bullet-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "- Ensure all tests pass.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
+      "id": "S2-verification-claim/imperative-in-numbered-step-excluded",
+      "path": "CONTRIBUTING.md",
+      "scope": "repository",
+      "markdown": true,
+      "text": "1. Verify that the build passes.\n",
+      "expect": [],
+      "must_not_find": ["S2-verification-claim"]
+    },
+    {
       "id": "S3-attention-bait/positive",
       "path": "README.md",
       "scope": "repository",
