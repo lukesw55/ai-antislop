@@ -309,7 +309,15 @@ class DirectiveTests(unittest.TestCase):
         cases = {
             "unterminated html": (
                 "<!-- anti-slop-ignore-next-line S2-verification-claim -- x\nAll tests passed.\n",
-                "must end with -->",
+                "whole line",
+            ),
+            "content after the html closer": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x --> All tests passed.\nmore\n",
+                "whole line",
+            ),
+            "second comment after the html closer": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x --> claim <!-- -->\nmore\n",
+                "whole line",
             ),
             "missing reason": (
                 "# anti-slop-ignore-next-line S2-verification-claim\nx\n",

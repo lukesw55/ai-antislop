@@ -591,15 +591,16 @@ def parse_directives(
             continue
         rest = head.group("rest")
         if head.group("opener") == "<!--":
-            stripped = rest.rstrip()
-            if not stripped.endswith("-->"):
+            closer = rest.find("-->")
+            if closer < 0 or rest[closer + 3 :].strip():
                 problems.append(
                     DirectiveProblem(
-                        line_number, "HTML comment directive must end with --> on the same line"
+                        line_number,
+                        "HTML comment directive must be the whole line and close with --> at its end",
                     )
                 )
                 continue
-            rest = stripped[:-3]
+            rest = rest[:closer]
         body = _DIRECTIVE_BODY.match(rest)
         if body is None:
             problems.append(
