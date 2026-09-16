@@ -194,6 +194,33 @@ class DetectionTests(unittest.TestCase):
             [("S1-label-colon-bullet", 3, "- **Theme:** one")],
         )
 
+    def test_imperative_instructions_are_excluded_but_assertions_are_not(self):
+        excluded = (
+            "Confirm that tests pass before merging.\n",
+            "Verify that all tests pass before pushing.\n",
+            "Run lint. Then ensure all tests pass.\n",
+            "Please ensure all tests pass.\n",
+            "- Ensure all tests pass.\n",
+            "1. Verify that the build passes.\n",
+            "**Ensure** all tests pass.\n",
+        )
+        for text in excluded:
+            with self.subTest(text=text):
+                self.assertEqual(self.scan_repo(text), [])
+        asserted = (
+            "I confirm that all tests pass.\n",
+            "I verify that tests pass.\n",
+            "We confirm that the build passes.\n",
+            "I ensure that all tests pass.\n",
+            "The maintainer confirms that tests pass.\n",
+        )
+        for text in asserted:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    [finding.rule_id for finding in self.scan_repo(text)],
+                    ["S2-verification-claim"],
+                )
+
     def test_conditional_and_negated_claims_are_excluded(self):
         for text in (
             "If tests pass, commit:\n",
