@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-09-16
+
+First tagged release. It carries the deterministic layer, the scanner, the optional Stop hook, the synchronization script and the reference catalog as they stand after the stacked-delivery recovery and the audit remediation.
 
 ### Changed
 
