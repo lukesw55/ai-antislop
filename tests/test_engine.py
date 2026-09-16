@@ -12,9 +12,12 @@ sys.path.insert(0, str(SKILL_ROOT))
 
 from lib.anti_slop_engine import (  # noqa: E402
     RegistryError,
+    Suppression,
+    apply_suppressions,
     fails_at,
     filename_findings,
     load_rules,
+    parse_directives,
     scan_text,
 )
 
@@ -264,6 +267,123 @@ class DetectionTests(unittest.TestCase):
         self.assertFalse(fails_at(trim, "BLOCK"))
         self.assertTrue(fails_at(trim, "TRIM"))
         self.assertTrue(fails_at(flag, "FLAG"))
+
+
+class DirectiveTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = load_rules()
+
+    def parse(self, text, markdown=False):
+        return parse_directives(text, self.rules, markdown=markdown)
+
+    def test_parses_all_three_comment_forms(self):
+        text = (
+            "<!-- anti-slop-ignore-file D7-summary-file -- mdBook index -->\n"
+            "# anti-slop-ignore-next-line S2-verification-claim -- conditional\n"
+            "if tests pass: ok\n"
+            "  // anti-slop-ignore-next-line S3-attention-bait -- product name\n"
+            "Magic Mouse\n"
+        )
+        suppressions, problems = self.parse(text)
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            [(s.rule_id, s.scope, s.directive_line, s.target_line) for s in suppressions],
+            [
+                ("D7-summary-file", "file", 1, None),
+                ("S2-verification-claim", "next-line", 2, 3),
+                ("S3-attention-bait", "next-line", 4, 5),
+            ],
+        )
+        self.assertEqual(suppressions[0].reason, "mdBook index")
+
+    def test_non_directive_lines_are_left_alone(self):
+        for text in (
+            "code = 1  # anti-slop-ignore-next-line S2-verification-claim -- trailing\nx\n",
+            "# anti-slop-ignore-next-lines S2-verification-claim -- plural\nx\n",
+            "# anti-slop-ignore-file-wide S2-verification-claim -- suffix\nx\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.parse(text), ([], []))
+
+    def test_malformed_and_misplaced_directives_are_problems(self):
+        cases = {
+            "unterminated html": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x\nAll tests passed.\n",
+                "whole line",
+            ),
+            "content after the html closer": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x --> All tests passed.\nmore\n",
+                "whole line",
+            ),
+            "second comment after the html closer": (
+                "<!-- anti-slop-ignore-next-line S2-verification-claim -- x --> claim <!-- -->\nmore\n",
+                "whole line",
+            ),
+            "missing reason": (
+                "# anti-slop-ignore-next-line S2-verification-claim\nx\n",
+                "expected",
+            ),
+            "unknown rule": (
+                "# anti-slop-ignore-next-line Nope -- x\nx\n",
+                "unknown rule id",
+            ),
+            "no following line": (
+                "x\n# anti-slop-ignore-next-line S2-verification-claim -- x\n",
+                "no following line",
+            ),
+            "file directive too late": (
+                "\n" * 10 + "# anti-slop-ignore-file S2-verification-claim -- late\nx\n",
+                "first 10 lines",
+            ),
+        }
+        for label, (text, fragment) in cases.items():
+            with self.subTest(label=label):
+                suppressions, problems = self.parse(text)
+                self.assertEqual(suppressions, [])
+                self.assertEqual(len(problems), 1)
+                self.assertIn(fragment, problems[0].reason)
+
+    def test_fenced_directives_are_not_recognized_in_markdown(self):
+        text = "```\n# anti-slop-ignore-file D2-maturity-claim -- example\n```\nProduction-ready.\n"
+        self.assertEqual(self.parse(text, markdown=True), ([], []))
+        suppressions, _ = self.parse(text, markdown=False)
+        self.assertEqual([s.scope for s in suppressions], ["file"])
+
+    def test_apply_suppressions_uses_exact_rule_and_line(self):
+        findings = scan_text(
+            "Production-ready.\nProduction-ready.\nAll tests passed.\n",
+            path="x.md",
+            scope="repository",
+            markdown=True,
+        )
+        suppressions = [
+            Suppression("D2-maturity-claim", "next-line", 0, 2, "vendor wording"),
+            Suppression("S2-verification-claim", "file", 0, None, "quoted policy"),
+        ]
+        active, suppressed = apply_suppressions(findings, suppressions)
+        self.assertEqual([(f.rule_id, f.line) for f in active], [("D2-maturity-claim", 1)])
+        self.assertEqual(
+            [(f.rule_id, f.line) for f in suppressed],
+            [("D2-maturity-claim", 2), ("S2-verification-claim", 3)],
+        )
+
+    def test_skip_lines_drops_findings_on_those_lines(self):
+        regex = scan_text(
+            "Production-ready.\nProduction-ready.\n",
+            path="x.md",
+            scope="repository",
+            markdown=True,
+            skip_lines={1},
+        )
+        self.assertEqual([f.line for f in regex], [2])
+        sequence = scan_text(
+            "- **Alpha:** 1\n- **Beta:** 2\n- **Gamma:** 3\n",
+            path="x.md",
+            scope="repository",
+            markdown=True,
+            skip_lines={1},
+        )
+        self.assertEqual(sequence, [])
 
 
 if __name__ == "__main__":
